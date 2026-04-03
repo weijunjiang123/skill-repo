@@ -41,9 +41,18 @@ Skill Repo 就是来解决这些问题的。
 
 **安装**（需要 Python 3.8+ 和 Git）
 
+用 pipx 安装（不会污染环境）
+
 ```bash
-pip install git+https://github.com/weijunjiang123/skill-repo.git
+pip install pipx
+
+pipx install git+https://github.com/weijunjiang123/skill-repo.git
 ```
+安装完成后直接可用：
+
+``` bash
+skill-repo interactive
+````
 
 **30 秒上手**
 
