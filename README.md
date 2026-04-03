@@ -6,7 +6,7 @@
 
 用一个 Git 仓库，搞定 Claude Code / Codex / Kiro 的 Skill 共享、同步和版本管理。
 
-[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey.svg)]()
 
@@ -39,7 +39,7 @@ Skill Repo 就是来解决这些问题的。
 
 ## 🚀 快速开始
 
-**安装**（需要 Python 3.10+ 和 Git）
+**安装**（需要 Python 3.8+ 和 Git）
 
 ```bash
 pip install git+https://github.com/weijunjiang123/skill-repo.git
