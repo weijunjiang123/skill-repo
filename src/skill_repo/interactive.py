@@ -1,4 +1,15 @@
-"""交互式 TUI 模式 - 使用 rich + questionary 实现美观的菜单式交互"""
+"""交互式 TUI 模式 - 使用 rich + questionary 实现美观的菜单式交互
+
+优化点:
+- 分组菜单（7 项主菜单，版本管理收为子菜单）
+- 操作完成后 "按 Enter 继续" 替代强制 select
+- 首次清屏，后续用分隔线
+- 概览只展示摘要
+- 默认平台支持
+- Esc 取消用 sentinel 区分 None 值
+- 搜索结果可直接安装
+- 错误后提供恢复建议
+"""
 
 from __future__ import annotations
 
@@ -12,16 +23,23 @@ from rich.panel import Panel
 from skill_repo._console import (
     console,
     error,
+    history_table,
+    repos_table,
     skill_table,
     status_spinner,
     success,
+    update_table,
     warning,
+    info,
 )
 from skill_repo.config_manager import ConfigManager
 from skill_repo.git_manager import GitManager
 from skill_repo.metadata import MetadataParser, SkillInfo
 from skill_repo.platforms import PlatformRegistry
 from skill_repo.skill_manager import SkillManager
+
+# ── sentinel 值：区分 Esc 取消 vs 选择了 None ────────────────────
+_CANCELLED = object()
 
 # questionary 自定义样式
 _QS = Style([
@@ -62,7 +80,7 @@ def _get_connected_repo() -> tuple[str, Path] | None:
 
 
 def _ask(prompt_fn):
-    """Wrap a questionary prompt — return None on Esc/Ctrl+C."""
+    """Wrap a questionary prompt — return _CANCELLED on Esc/Ctrl+C."""
     from prompt_toolkit.key_binding import KeyBindings, merge_key_bindings
     from prompt_toolkit.keys import Keys
 
@@ -80,11 +98,27 @@ def _ask(prompt_fn):
     try:
         return app.run()
     except KeyboardInterrupt:
-        return None
+        return _CANCELLED
 
 
-def _banner() -> None:
-    os.system("cls" if os.name == "nt" else "clear")
+def _pause() -> None:
+    """操作完成后暂停，按 Enter 继续。"""
+    console.print()
+    console.input("  [dim]按 Enter 返回主菜单...[/dim]")
+
+
+def _separator() -> None:
+    """主菜单前的分隔线（替代清屏）。"""
+    console.print()
+    console.rule(style="dim")
+    console.print()
+
+
+def _banner(first_time: bool = False) -> None:
+    if first_time:
+        os.system("cls" if os.name == "nt" else "clear")
+    else:
+        _separator()
     console.print(
         Panel(
             "[bold cyan]Skill Repo[/bold cyan]  [dim]— 团队 Skill 共享管理工具[/dim]",
@@ -106,55 +140,135 @@ def _not_connected_msg() -> None:
     )
 
 
+def _default_platform() -> str | None:
+    """读取默认平台配置。"""
+    config = _get_config()
+    return config.get("defaults.target_platform")
+
+
+def _skill_choice_label(s: SkillInfo) -> str:
+    """生成 questionary Choice 的纯文本标签：名称 (分类) — 描述"""
+    desc = s.metadata.description or ""
+    if len(desc) > 40:
+        desc = desc[:38] + "…"
+    if desc:
+        return f"{s.metadata.name}  ({s.category}) — {desc}"
+    return f"{s.metadata.name}  ({s.category})"
+
+
+def _pick_platform(prompt: str = "选择平台:") -> str | None:
+    """选择平台，支持默认值。返回平台 name 或 None（取消）。"""
+    registry = PlatformRegistry()
+    platforms = registry.all()
+    default = _default_platform()
+
+    # 如果有默认值，放在第一个并标注
+    names = []
+    for pc in platforms:
+        label = pc.label
+        if pc.name == default:
+            label += " (默认)"
+        names.append(label)
+
+    # 默认选中项
+    default_label = None
+    for pc, label in zip(platforms, names):
+        if pc.name == default:
+            default_label = label
+            break
+
+    result = _ask(questionary.select(
+        prompt,
+        choices=names,
+        default=default_label,
+        style=_QS,
+        instruction="(Esc 返回)",
+    ))
+    if result is _CANCELLED:
+        return None
+    # 从 label 还原 platform name
+    for pc, label in zip(platforms, names):
+        if label == result:
+            return pc.name
+    return None
+
+
 # ── actions ──────────────────────────────────────────────────────
 
 def _action_overview() -> None:
-    """查看 skill 概览 - 远程仓库 + 本地平台详细列表"""
+    """概览 — 只展示摘要，不信息过载"""
     conn = _get_connected_repo()
-    parser = MetadataParser()
 
-    # ── 远程仓库 ──
     if conn:
         url, cache_path = conn
         sm = _get_skill_manager(cache_path)
         skills = sm.discover_skills(cache_path / "skills")
 
-        console.print(f"  [dim]仓库:[/dim] {url}\n")
+        # 分类统计
+        cats: dict[str, int] = {}
+        for s in skills:
+            cats[s.category] = cats.get(s.category, 0) + 1
+        cats_str = "  ".join(f"{c}: {n}" for c, n in sorted(cats.items())) if cats else "无"
 
-        if skills:
-            console.print(skill_table(skills, title="远程仓库 Skill"))
-        else:
-            warning("仓库中暂无 skill")
+        repo_info = (
+            f"[bold]仓库:[/bold] {url}\n"
+            f"[bold]Skill 总数:[/bold] {len(skills)}\n"
+            f"[bold]分类:[/bold] {cats_str}"
+        )
+        console.print(Panel(repo_info, title="[bold]远程仓库[/bold]", border_style="cyan", padding=(0, 2)))
     else:
         _not_connected_msg()
 
-    # ── 本地平台 ──
+    # 本地平台摘要
     console.print()
     registry = PlatformRegistry()
+    parser = MetadataParser()
     for pc in registry.all():
         if not pc.skills_dir.is_dir():
-            console.print(f"  [bold]{pc.label}[/bold]  [dim]— 目录不存在[/dim]")
+            console.print(f"  [bold]{pc.label}[/bold]  [dim]— 未安装[/dim]")
             continue
+        count = sum(1 for d in pc.skills_dir.iterdir() if d.is_dir() and (d / "SKILL.md").exists())
+        console.print(f"  [bold]{pc.label}[/bold]  [success]{count}[/success] 个 skill")
 
+    # 提供展开详情的选项
+    console.print()
+    action = _ask(questionary.select(
+        "查看详情:",
+        choices=["查看远程仓库 Skill 列表", "查看某个平台的本地 Skill", "← 返回"],
+        style=_QS,
+        instruction="(Esc 返回)",
+    ))
+    if action is _CANCELLED or action == "← 返回":
+        return
+
+    if action == "查看远程仓库 Skill 列表":
+        if conn:
+            _url, cache_path = conn
+            sm = _get_skill_manager(cache_path)
+            skills = sm.discover_skills(cache_path / "skills")
+            if skills:
+                console.print(skill_table(skills, title="远程仓库 Skill"))
+            else:
+                warning("仓库中暂无 skill")
+        else:
+            _not_connected_msg()
+    elif action == "查看某个平台的本地 Skill":
+        platform_name = _pick_platform("查看哪个平台?")
+        if platform_name is None:
+            return
+        pc = registry.get(platform_name)
+        if not pc.skills_dir.is_dir():
+            warning(f"{pc.label} 目录不存在")
+            return
         local_skills: list[SkillInfo] = []
         for child in sorted(pc.skills_dir.iterdir()):
             if child.is_dir() and (child / "SKILL.md").exists():
                 meta = parser.parse(child / "SKILL.md")
                 local_skills.append(SkillInfo(metadata=meta, category="local", source_path=child))
-
-        if not local_skills:
-            console.print(f"  [bold]{pc.label}[/bold]  [dim]— 无 skill[/dim]")
-            continue
-
-        console.print(skill_table(local_skills, title=f"{pc.label} ({len(local_skills)} skills)"))
-        console.print()
-
-    _ask(questionary.select(
-        "",
-        choices=["← 返回主菜单"],
-        style=_QS,
-        instruction="(Esc 返回)",
-    ))
+        if local_skills:
+            console.print(skill_table(local_skills, title=f"{pc.label} 本地 Skill"))
+        else:
+            warning(f"{pc.label} 暂无 skill")
 
 
 def _action_install() -> None:
@@ -172,50 +286,50 @@ def _action_install() -> None:
         warning("仓库中暂无 skill")
         return
 
-    # 选平台
-    registry = PlatformRegistry()
-    platforms = registry.all()
-    target_name = _ask(questionary.select(
-        "安装到哪个平台?",
-        choices=[pc.label for pc in platforms],
-        style=_QS,
-        instruction="(Esc 返回)",
-    ))
-    if target_name is None:
+    # 选平台（支持默认值）
+    platform_name = _pick_platform("安装到哪个平台?")
+    if platform_name is None:
         return
-    target = next(pc for pc in platforms if pc.label == target_name)
 
-    # 选 skill
+    # 先展示可用 skill 列表（含描述）
+    console.print(skill_table(available, title="可用 Skill"))
+    console.print()
+
+    # 选 skill — 名称 + 截短描述
     choices = [
         questionary.Choice(
-            title=f"{s.metadata.name}  {s.category}  {s.metadata.description or ''}",
+            title=_skill_choice_label(s),
             value=i,
         )
         for i, s in enumerate(available)
     ]
     selected = _ask(questionary.checkbox(
-        "选择 skill (Space 选择, Enter 确认, Esc 返回):",
+        "选择要安装的 skill (Space 选择, Enter 确认):",
         choices=choices,
         style=_QS,
     ))
-    if not selected:
+    if selected is _CANCELLED or not selected:
         console.print("  [dim]已取消[/dim]")
         return
 
+    # 展示选中的 skill 详情
+    console.print()
+    for idx in selected:
+        s = available[idx]
+        console.print(f"  • {s.metadata.name} — {s.metadata.description or '无描述'}")
+    console.print()
+
     with status_spinner(f"正在安装 {len(selected)} 个 skill ..."):
         for idx in selected:
-            skill = available[idx]
-            sm.install_skill(skill, target.name)
+            sm.install_skill(available[idx], platform_name)
 
     for idx in selected:
-        skill = available[idx]
-        success(skill.metadata.name)
-
-    console.print(f"\n  [success]已安装 {len(selected)} 个 skill 到 {target.label}[/success]")
+        success(available[idx].metadata.name)
+    console.print(f"\n  [success]已安装 {len(selected)} 个 skill 到 {platform_name}[/success]")
 
 
 def _action_upload() -> None:
-    """上传 skill（本地 → 仓库）"""
+    """上传 skill（本地 → 仓库）— 支持多选批量上传"""
     conn = _get_connected_repo()
     if not conn:
         _not_connected_msg()
@@ -223,19 +337,13 @@ def _action_upload() -> None:
 
     _url, cache_path = conn
     registry = PlatformRegistry()
-    platforms = registry.all()
     parser = MetadataParser()
 
     # 选来源平台
-    source_name = _ask(questionary.select(
-        "从哪个平台上传?",
-        choices=[pc.label for pc in platforms],
-        style=_QS,
-        instruction="(Esc 返回)",
-    ))
-    if source_name is None:
+    platform_name = _pick_platform("从哪个平台上传?")
+    if platform_name is None:
         return
-    source = next(pc for pc in platforms if pc.label == source_name)
+    source = registry.get(platform_name)
 
     # 扫描本地 skill
     local_skills: list[SkillInfo] = []
@@ -249,26 +357,49 @@ def _action_upload() -> None:
         warning(f"{source.label} 平台暂无 skill")
         return
 
-    # 选 skill
-    skill_choice = _ask(questionary.select(
-        "选择要上传的 skill:",
-        choices=[s.metadata.name for s in local_skills],
+    # 多选 skill
+    choices = [
+        questionary.Choice(
+            title=f"{s.metadata.name}  {s.metadata.description or ''}",
+            value=i,
+        )
+        for i, s in enumerate(local_skills)
+    ]
+    selected_indices = _ask(questionary.checkbox(
+        "选择要上传的 skill (Space 选择, Enter 确认):",
+        choices=choices,
         style=_QS,
-        instruction="(Esc 返回)",
     ))
-    if skill_choice is None:
-        return
-    skill = next(s for s in local_skills if s.metadata.name == skill_choice)
-
-    # 验证
-    errors = parser.validate(skill.source_path)
-    if errors:
-        error("元数据不完整:")
-        for e in errors:
-            console.print(f"    [error]•[/error] {e}")
+    if selected_indices is _CANCELLED or not selected_indices:
+        console.print("  [dim]已取消[/dim]")
         return
 
-    # 选分类
+    selected_skills = [local_skills[i] for i in selected_indices]
+
+    # 验证所有选中的 skill
+    invalid: list[tuple[str, list[str]]] = []
+    valid_skills: list[SkillInfo] = []
+    for skill in selected_skills:
+        errors = parser.validate(skill.source_path)
+        if errors:
+            invalid.append((skill.metadata.name, errors))
+        else:
+            valid_skills.append(skill)
+
+    if invalid:
+        warning("以下 skill 元数据不完整，将跳过:")
+        for name, errs in invalid:
+            console.print(f"    [bold]{name}[/bold]:")
+            for e in errs:
+                console.print(f"      [error]•[/error] {e}")
+        console.print()
+        if not valid_skills:
+            info("没有可上传的 skill，请补充 SKILL.md 元数据后重试。")
+            return
+        info(f"将上传 {len(valid_skills)} 个有效 skill。")
+        console.print()
+
+    # 选分类（统一分类）
     skills_dir = cache_path / "skills"
     cats = sorted(d.name for d in skills_dir.iterdir() if d.is_dir() and not d.name.startswith("_")) if skills_dir.is_dir() else []
     if not cats:
@@ -276,70 +407,677 @@ def _action_upload() -> None:
     cat_choices = cats + ["+ 新建分类"]
 
     cat = _ask(questionary.select("选择分类:", choices=cat_choices, style=_QS, instruction="(Esc 返回)"))
-    if cat is None:
+    if cat is _CANCELLED:
         return
     if cat == "+ 新建分类":
         cat = _ask(questionary.text("输入分类名:", style=_QS))
-        if not cat or not cat.strip():
+        if cat is _CANCELLED or not cat or not cat.strip():
             return
         cat = cat.strip()
 
-    # 复制 + git
-    dest = cache_path / "skills" / cat / skill.metadata.name
-    is_update = dest.exists()
+    # 展示上传计划
+    console.print()
+    for skill in valid_skills:
+        dest = cache_path / "skills" / cat / skill.metadata.name
+        tag = "[warning]更新[/warning]" if dest.exists() else "[info]新增[/info]"
+        console.print(f"  {tag} {skill.metadata.name}")
+    console.print()
+
+    ok = _ask(questionary.confirm(f"确认上传 {len(valid_skills)} 个 skill 到 '{cat}' 分类?", default=True, style=_QS))
+    if ok is _CANCELLED or not ok:
+        return
+
+    # 批量复制
     sm = _get_skill_manager(cache_path)
+    uploaded_names: list[str] = []
+    with status_spinner(f"正在复制 {len(valid_skills)} 个 skill 到仓库缓存 ..."):
+        for skill in valid_skills:
+            dest = cache_path / "skills" / cat / skill.metadata.name
+            sm.copy_skill(skill.source_path, dest)
+            uploaded_names.append(skill.metadata.name)
 
-    with status_spinner("正在复制到仓库缓存 ..."):
-        sm.copy_skill(skill.source_path, dest)
-    success("已复制到仓库缓存")
-
-    label = "更新" if is_update else "添加"
+    # 一次性 git commit + push
     git = _get_git()
-    msg = f"{label} skill: {skill.metadata.name} ({source.name}/{cat})"
+    if len(valid_skills) == 1:
+        skill = valid_skills[0]
+        dest = cache_path / "skills" / cat / skill.metadata.name
+        label = "更新" if (cache_path / "skills" / cat / skill.metadata.name).exists() else "新增"
+        msg = git.build_skill_commit_message(
+            label, skill.metadata.name,
+            source=source.name, category=cat,
+            description=skill.metadata.description,
+            version=skill.metadata.version,
+        )
+    else:
+        names_str = ", ".join(uploaded_names)
+        msg = f"📦 批量上传 {len(valid_skills)} 个 skill: {names_str}\n\n来源: {source.name} | 分类: {cat}"
 
-    with status_spinner("正在推送到远程仓库 ..."):
-        try:
-            git.add_commit_push(cache_path, msg, push=True)
-        except RuntimeError as exc:
-            if "push" in str(exc).lower():
-                warning("推送失败，请手动 git push")
-            else:
+    # 分支模式 vs 直推模式
+    config = _get_config()
+    branch_mode = config.get("branch.mode") or "direct"
+
+    if branch_mode == "branch":
+        # 分支模式：每个 skill 一个分支，或批量用一个分支
+        username = git.get_username(cache_path)
+        if len(valid_skills) == 1:
+            action_short = "add"
+            branch_name = f"skill/{username}/{action_short}-{valid_skills[0].metadata.name}"
+        else:
+            branch_name = f"skill/{username}/batch-upload-{len(valid_skills)}"
+
+        with status_spinner("正在创建分支并提交 ..."):
+            try:
+                main_branch = git._get_main_branch(cache_path)
+                git._run_git(["checkout", main_branch], cwd=cache_path)
+                try:
+                    git.pull(cache_path)
+                except RuntimeError:
+                    pass
+                try:
+                    git._run_git(["branch", "-D", branch_name], cwd=cache_path)
+                except RuntimeError:
+                    pass
+                git._run_git(["checkout", "-b", branch_name], cwd=cache_path)
+                git.add_commit_push(cache_path, msg, push=False)
+                git.push_branch(cache_path, branch_name)
+            except RuntimeError as exc:
                 error(f"Git 错误: {exc}")
+                return
+
+        auto_merge = config.get("branch.auto_merge") != "false"
+        merged = False
+        if auto_merge:
+            with status_spinner("正在尝试合并到主分支 ..."):
+                merged = git.try_merge_to_main(cache_path, branch_name)
+            if merged:
+                sync_result = sm.sync_all(cache_path)
+                if any(sync_result.values()):
+                    try:
+                        git.add_commit_push(cache_path, "同步生成文件", push=False)
+                    except RuntimeError:
+                        pass
+                try:
+                    git.push_main(cache_path)
+                except RuntimeError as exc:
+                    warning(f"推送失败: {exc}")
+                if config.get("branch.cleanup") != "false":
+                    git.delete_remote_branch(cache_path, branch_name)
+
+        console.print()
+        for name in uploaded_names:
+            success(name)
+        if merged:
+            success("已合并到主分支。")
+        else:
+            warning(f"分支 {branch_name} 已推送，无法自动合并。")
+            info("请在 GitHub/GitLab 创建 Pull Request 合并到主分支。")
+    else:
+        # 直推模式
+        pushed = False
+        with status_spinner("正在提交并推送 ..."):
+            try:
+                git.add_commit_push(cache_path, msg, push=True)
+                pushed = True
+            except RuntimeError as exc:
+                if "push" in str(exc).lower():
+                    warning("推送失败，请手动 git push")
+                else:
+                    error(f"Git 错误: {exc}")
+
+        with status_spinner("正在同步生成文件 ..."):
+            sync_result = sm.sync_all(cache_path)
+        if any(sync_result.values()):
+            try:
+                git.add_commit_push(cache_path, "同步生成文件", push=pushed)
+            except RuntimeError:
+                pass
+
+        console.print()
+        for name in uploaded_names:
+            success(name)
+
+        from skill_repo._console import upload_summary
+        if len(valid_skills) == 1:
+            skill = valid_skills[0]
+            console.print()
+            console.print(upload_summary(
+                "新增", skill.metadata.name,
+                source=source.name, category=cat,
+                version=skill.metadata.version, pushed=pushed,
+            ))
+        else:
+            console.print()
+            status_text = "[success]已推送到远程[/success]" if pushed else "[warning]仅本地提交[/warning]"
+            console.print(f"  📦 批量上传 {len(valid_skills)} 个 skill 到 [cyan]{cat}[/cyan] 分类  {status_text}")
+
+
+def _action_search() -> None:
+    """搜索 skill — 支持本地和远程，搜索结果可直接操作"""
+    # 选择搜索范围
+    scope = _ask(questionary.select(
+        "搜索范围:",
+        choices=["🌐  远程仓库", "💻  本地已安装", "🔎  全部（远程 + 本地）"],
+        style=_QS,
+        instruction="(Esc 返回)",
+    ))
+    if scope is _CANCELLED:
+        return
+
+    keyword = _ask(questionary.text("搜索关键词:", style=_QS))
+    if keyword is _CANCELLED or not keyword or not keyword.strip():
+        return
+    keyword = keyword.strip()
+
+    conn = _get_connected_repo()
+    sm_remote = _get_skill_manager(conn[1]) if conn else None
+    parser = MetadataParser()
+    registry = PlatformRegistry()
+
+    remote_matched: list[SkillInfo] = []
+    local_matched: list[tuple[str, SkillInfo]] = []  # (platform_name, skill)
+
+    # 远程搜索
+    if scope in ("🌐  远程仓库", "🔎  全部（远程 + 本地）"):
+        if conn and sm_remote:
+            _url, cache_path = conn
+            available = sm_remote.discover_skills(cache_path / "skills")
+            remote_matched = sm_remote.search_skills(available, keyword)
+        elif scope == "🌐  远程仓库":
+            _not_connected_msg()
             return
 
-    success("已推送到远程仓库")
+    # 本地搜索
+    if scope in ("💻  本地已安装", "🔎  全部（远程 + 本地）"):
+        for pc in registry.all():
+            if not pc.skills_dir.is_dir():
+                continue
+            for child in sorted(pc.skills_dir.iterdir()):
+                if child.is_dir() and (child / "SKILL.md").exists():
+                    meta = parser.parse(child / "SKILL.md")
+                    si = SkillInfo(metadata=meta, category="local", source_path=child)
+                    kw = keyword.lower()
+                    if (kw in meta.name.lower()
+                            or kw in (meta.description or "").lower()):
+                        local_matched.append((pc.name, si))
+
+    # 展示结果
+    has_results = False
+
+    if remote_matched:
+        has_results = True
+        console.print(skill_table(remote_matched, title=f"远程仓库匹配: '{keyword}' ({len(remote_matched)} 个)"))
+        console.print()
+
+    if local_matched:
+        has_results = True
+        # 按平台分组展示
+        by_platform: dict[str, list[SkillInfo]] = {}
+        for pname, si in local_matched:
+            by_platform.setdefault(pname, []).append(si)
+        for pname, skills in by_platform.items():
+            pc = registry.get(pname)
+            console.print(skill_table(skills, title=f"{pc.label} 本地匹配 ({len(skills)} 个)"))
+            console.print()
+
+    if not has_results:
+        console.print(f"  [dim]未找到匹配 '{keyword}' 的 skill[/dim]")
+        return
+
+    # 后续操作
+    actions = []
+    if remote_matched:
+        actions.append("📥  安装远程搜索结果")
+    if local_matched and conn:
+        actions.append("📤  上传本地搜索结果")
+    actions.append("← 返回")
+
+    action = _ask(questionary.select(
+        "操作:",
+        choices=actions,
+        style=_QS,
+        instruction="(Esc 返回)",
+    ))
+    if action is _CANCELLED or action == "← 返回":
+        return
+
+    if action == "📥  安装远程搜索结果":
+        platform_name = _pick_platform("安装到哪个平台?")
+        if platform_name is None:
+            return
+        choices = [
+            questionary.Choice(title=s.metadata.name, value=i)
+            for i, s in enumerate(remote_matched)
+        ]
+        selected = _ask(questionary.checkbox(
+            "选择要安装的 skill:",
+            choices=choices,
+            style=_QS,
+        ))
+        if selected is _CANCELLED or not selected:
+            return
+        with status_spinner(f"正在安装 {len(selected)} 个 skill ..."):
+            for idx in selected:
+                sm_remote.install_skill(remote_matched[idx], platform_name)
+        for idx in selected:
+            success(remote_matched[idx].metadata.name)
+
+    elif action == "📤  上传本地搜索结果" and conn:
+        _url, cache_path = conn
+        # 选分类
+        skills_dir = cache_path / "skills"
+        cats = sorted(d.name for d in skills_dir.iterdir() if d.is_dir() and not d.name.startswith("_")) if skills_dir.is_dir() else []
+        if not cats:
+            cats = ["uncategorized"]
+        cat_choices = cats + ["+ 新建分类"]
+        cat = _ask(questionary.select("选择分类:", choices=cat_choices, style=_QS))
+        if cat is _CANCELLED:
+            return
+        if cat == "+ 新建分类":
+            cat = _ask(questionary.text("输入分类名:", style=_QS))
+            if cat is _CANCELLED or not cat or not cat.strip():
+                return
+            cat = cat.strip()
+
+        all_local = [si for _, si in local_matched]
+        choices = [
+            questionary.Choice(title=s.metadata.name, value=i)
+            for i, s in enumerate(all_local)
+        ]
+        selected = _ask(questionary.checkbox(
+            "选择要上传的 skill:",
+            choices=choices,
+            style=_QS,
+        ))
+        if selected is _CANCELLED or not selected:
+            return
+
+        sm = _get_skill_manager(cache_path)
+        git = _get_git()
+        names: list[str] = []
+        with status_spinner(f"正在上传 {len(selected)} 个 skill ..."):
+            for idx in selected:
+                skill = all_local[idx]
+                dest = cache_path / "skills" / cat / skill.metadata.name
+                sm.copy_skill(skill.source_path, dest)
+                names.append(skill.metadata.name)
+            msg = f"📦 上传 {len(names)} 个 skill: {', '.join(names)}\n\n分类: {cat}"
+            try:
+                git.add_commit_push(cache_path, msg, push=True)
+            except RuntimeError as exc:
+                warning(f"推送失败: {exc}")
+        for name in names:
+            success(name)
+
+
+def _action_update() -> None:
+    """更新已安装的 skill"""
+    conn = _get_connected_repo()
+    if not conn:
+        _not_connected_msg()
+        return
+
+    _url, cache_path = conn
+
+    platform_name = _pick_platform("更新哪个平台的 skill?")
+    if platform_name is None:
+        return
+
+    git = _get_git()
+    with status_spinner("正在拉取远程仓库最新内容 ..."):
+        try:
+            git.pull(cache_path)
+        except RuntimeError as exc:
+            warning(f"拉取失败: {exc}")
+
+    sm = _get_skill_manager(cache_path)
+    new, updated, unchanged = sm.diff_skills(cache_path / "skills", platform_name)
+
+    if not new and not updated:
+        success("所有已安装的 skill 均为最新。")
+        return
+
+    console.print(update_table(new, updated, unchanged))
+    console.print()
+
+    if not updated:
+        console.print("  [dim]无需更新的 skill[/dim]")
+        if new:
+            info(f"有 {len(new)} 个新 skill 可用，使用「安装 Skill」菜单安装。")
+        return
+
+    ok = _ask(questionary.confirm(f"更新 {len(updated)} 个 skill?", default=True, style=_QS))
+    if ok is _CANCELLED or not ok:
+        return
+
+    with status_spinner(f"正在更新 {len(updated)} 个 skill ..."):
+        for s in updated:
+            sm.install_skill(s, platform_name)
+
+    success(f"已更新 {len(updated)} 个 skill。")
+    if new:
+        info(f"另有 {len(new)} 个新 skill 可用。")
+
+
+def _action_remove() -> None:
+    """卸载 skill"""
+    platform_name = _pick_platform("从哪个平台卸载?")
+    if platform_name is None:
+        return
+
+    sm = _get_skill_manager()
+    installed = sm.list_installed(platform_name)
+
+    if not installed:
+        registry = PlatformRegistry()
+        pc = registry.get(platform_name)
+        warning(f"{pc.label} 平台暂无已安装的 skill")
+        return
+
+    choices = [
+        questionary.Choice(
+            title=f"{s.metadata.name}  {s.metadata.description or ''}",
+            value=s.metadata.name,
+        )
+        for s in installed
+    ]
+    selected = _ask(questionary.checkbox(
+        "选择要卸载的 skill (Space 选择, Enter 确认):",
+        choices=choices,
+        style=_QS,
+    ))
+    if selected is _CANCELLED or not selected:
+        console.print("  [dim]已取消[/dim]")
+        return
+
+    # 展示即将卸载的内容
+    console.print()
+    for name in selected:
+        console.print(f"  [warning]•[/warning] {name}")
+    console.print()
+
+    ok = _ask(questionary.confirm(f"确认卸载 {len(selected)} 个 skill?", default=False, style=_QS))
+    if ok is _CANCELLED or not ok:
+        return
+
+    for name in selected:
+        sm.remove_skill(name, platform_name)
+        success(f"已卸载 {name}")
+
+
+def _action_version_mgmt() -> None:
+    """版本管理 — 子菜单：变更历史 + 回退 + 版本锁定安装"""
+    conn = _get_connected_repo()
+    if not conn:
+        _not_connected_msg()
+        return
+
+    action = _ask(questionary.select(
+        "版本管理:",
+        choices=["📜  查看变更历史", "📌  安装指定版本", "← 返回"],
+        style=_QS,
+        instruction="(Esc 返回)",
+    ))
+    if action is _CANCELLED or action == "← 返回":
+        return
+
+    if action == "📜  查看变更历史":
+        _sub_history()
+    elif action == "📌  安装指定版本":
+        _sub_pin_install()
+
+
+def _sub_history() -> None:
+    """变更历史 + 可选回退"""
+    conn = _get_connected_repo()
+    if not conn:
+        return
+
+    _url, cache_path = conn
+    git = _get_git()
+    sm = _get_skill_manager(cache_path)
+    available = sm.discover_skills(cache_path / "skills")
+
+    if not available:
+        warning("仓库中暂无 skill")
+        return
+
+    skill_name = _ask(questionary.select(
+        "查看哪个 skill 的历史?",
+        choices=[s.metadata.name for s in available],
+        style=_QS,
+        instruction="(Esc 返回)",
+    ))
+    if skill_name is _CANCELLED:
+        return
+
+    skill_path = git.find_skill_path(cache_path, skill_name)
+    if not skill_path:
+        error(f"未找到 '{skill_name}' 的路径")
+        return
+
+    commits = git.skill_log(cache_path, skill_path, max_count=20)
+    if not commits:
+        console.print(f"  [dim]'{skill_name}' 暂无变更历史[/dim]")
+        return
+
+    console.print(history_table(commits, title=f"'{skill_name}' 变更历史"))
+    console.print(f"  [dim]共 {len(commits)} 条记录[/dim]")
+
+    # 后续操作
+    action = _ask(questionary.select(
+        "操作:",
+        choices=["⏪  回退到某个版本", "← 返回"],
+        style=_QS,
+        instruction="(Esc 返回)",
+    ))
+    if action is _CANCELLED or action == "← 返回":
+        return
+
+    commit_choices = [
+        questionary.Choice(
+            title=f"{c.short_hash}  {c.date}  {c.author}  {c.message}",
+            value=c,
+        )
+        for c in commits
+    ]
+    selected_commit = _ask(questionary.select(
+        "回退到哪个版本?",
+        choices=commit_choices,
+        style=_QS,
+        instruction="(Esc 返回)",
+    ))
+    if selected_commit is _CANCELLED:
+        return
+
+    ok = _ask(questionary.confirm(
+        f"确认回退 '{skill_name}' 到 {selected_commit.short_hash}?",
+        default=False, style=_QS,
+    ))
+    if ok is _CANCELLED or not ok:
+        return
+
+    with status_spinner(f"正在回退 '{skill_name}' ..."):
+        try:
+            git.restore_skill(cache_path, skill_path, selected_commit.hash)
+        except RuntimeError as exc:
+            error(f"回退失败: {exc}")
+            return
+
+    success(f"已回退 '{skill_name}' 到 {selected_commit.short_hash}")
+
+    push = _ask(questionary.confirm("推送到远程仓库?", default=True, style=_QS))
+    if push is _CANCELLED:
+        return
+    if push:
+        msg = git.build_skill_commit_message(
+            "回退", skill_name,
+            description=f"→ {selected_commit.short_hash} ({selected_commit.message})",
+        )
+        with status_spinner("正在提交并推送 ..."):
+            try:
+                git.add_commit_push(cache_path, msg, push=True)
+            except RuntimeError as exc:
+                warning(f"推送失败: {exc}")
+                info("回退已在本地生效，请手动 git push。")
+                return
+        success("已推送到远程仓库")
+    else:
+        info("回退仅在本地缓存生效。")
+
+
+def _sub_pin_install() -> None:
+    """安装指定历史版本"""
+    conn = _get_connected_repo()
+    if not conn:
+        return
+
+    _url, cache_path = conn
+    git = _get_git()
+    sm = _get_skill_manager(cache_path)
+    available = sm.discover_skills(cache_path / "skills")
+
+    if not available:
+        warning("仓库中暂无 skill")
+        return
+
+    skill_name = _ask(questionary.select(
+        "选择 skill:",
+        choices=[s.metadata.name for s in available],
+        style=_QS,
+        instruction="(Esc 返回)",
+    ))
+    if skill_name is _CANCELLED:
+        return
+
+    skill_path = git.find_skill_path(cache_path, skill_name)
+    if not skill_path:
+        error(f"未找到 '{skill_name}' 的路径")
+        return
+
+    commits = git.skill_log(cache_path, skill_path, max_count=20)
+
+    # 选版本
+    version_choices = [questionary.Choice(title="最新版本 (HEAD)", value="HEAD")]
+    if commits:
+        for c in commits:
+            version_choices.append(questionary.Choice(
+                title=f"{c.short_hash}  {c.date}  {c.message}",
+                value=c,
+            ))
+
+    selected = _ask(questionary.select(
+        "安装哪个版本?",
+        choices=version_choices,
+        style=_QS,
+        instruction="(Esc 返回)",
+    ))
+    if selected is _CANCELLED:
+        return
+
+    # 选平台
+    platform_name = _pick_platform("安装到哪个平台?")
+    if platform_name is None:
+        return
+
+    if selected == "HEAD":
+        matched_skills = [s for s in available if s.metadata.name == skill_name]
+        if matched_skills:
+            with status_spinner(f"正在安装 {skill_name} (最新) ..."):
+                sm.install_skill(matched_skills[0], platform_name)
+            success(f"已安装 '{skill_name}' (最新) 到 {platform_name}")
+    else:
+        import subprocess
+        import tempfile
+        import tarfile
+        import io
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            try:
+                archive_result = subprocess.run(
+                    ["git", "archive", selected.hash, "--", skill_path],
+                    cwd=cache_path, check=True, capture_output=True,
+                )
+                tar = tarfile.open(fileobj=io.BytesIO(archive_result.stdout))
+                tar.extractall(path=tmpdir)
+                tar.close()
+            except (subprocess.CalledProcessError, Exception) as exc:
+                error(f"提取历史版本失败: {exc}")
+                return
+
+            extracted = Path(tmpdir) / skill_path
+            if not extracted.is_dir():
+                error("提取的 skill 目录不存在")
+                return
+
+            parser = MetadataParser()
+            skill_md = extracted / "SKILL.md"
+            if skill_md.exists():
+                metadata = parser.parse(skill_md)
+            else:
+                from skill_repo.metadata import SkillMetadata
+                metadata = SkillMetadata(name=skill_name, description="")
+            skill_info = SkillInfo(metadata=metadata, category="pinned", source_path=extracted)
+
+            with status_spinner(f"正在安装 {skill_name}@{selected.short_hash} ..."):
+                sm.install_skill(skill_info, platform_name)
+
+        success(f"已安装 '{skill_name}' @ {selected.short_hash} 到 {platform_name}")
 
 
 def _action_repo() -> None:
     """仓库管理"""
-    conn = _get_connected_repo()
-    if conn:
-        url, _ = conn
-        console.print(f"  [dim]当前仓库:[/dim] {url}\n")
+    config = _get_config()
+    all_repos = config.get_repos()
+
+    if all_repos:
+        current_url = config.get("repo.url")
+        current_alias = None
+        for a, r in all_repos.items():
+            if r.get("url") == current_url:
+                current_alias = a
+                break
+        console.print(repos_table(all_repos, current_alias))
+        console.print()
 
     choice = _ask(questionary.select(
         "操作:",
-        choices=["连接已有仓库", "初始化新仓库", "断开连接"],
+        choices=["连接已有仓库", "初始化新仓库", "断开连接", "← 返回"],
         style=_QS,
         instruction="(Esc 返回)",
     ))
-    if choice is None:
+    if choice is _CANCELLED or choice == "← 返回":
         return
 
     if choice == "断开连接":
-        if not conn:
+        if not all_repos:
             console.print("  [dim]当前未连接[/dim]")
             return
-        ok = _ask(questionary.confirm("确认断开?", default=False, style=_QS))
-        if ok:
-            config = _get_config()
-            config.set("repo.url", "")
-            config.set("repo.cache_path", "")
-            success("已断开")
+        if len(all_repos) > 1:
+            alias = _ask(questionary.select(
+                "选择要断开的仓库:",
+                choices=list(all_repos.keys()),
+                style=_QS,
+                instruction="(Esc 返回)",
+            ))
+            if alias is _CANCELLED:
+                return
+        else:
+            alias = next(iter(all_repos.keys()))
+        ok = _ask(questionary.confirm(f"确认断开 '{alias}'?", default=False, style=_QS))
+        if ok is _CANCELLED or not ok:
+            return
+        config.remove_repo(alias)
+        success(f"已断开 '{alias}'")
         return
 
+    # 连接或初始化
+    alias = _ask(questionary.text("仓库别名 (默认 default):", default="default", style=_QS))
+    if alias is _CANCELLED:
+        return
+    alias = alias.strip() or "default"
+
     url = _ask(questionary.text("Git 仓库 URL:", style=_QS))
-    if not url or not url.strip():
+    if url is _CANCELLED or not url or not url.strip():
         return
     url = url.strip()
 
@@ -356,25 +1094,7 @@ def _action_repo() -> None:
             return
 
     if choice == "初始化新仓库":
-        has_commits = git._has_commits(repo_path)
-        if has_commits and git.has_skills_dir(repo_path):
-            with status_spinner("正在检查远程仓库状态 ..."):
-                try:
-                    git._run_git(["push"], cwd=repo_path)
-                    success("已推送到远程仓库")
-                except RuntimeError:
-                    try:
-                        branch = git._get_current_branch(repo_path)
-                        git._run_git(["push", "-u", "origin", branch], cwd=repo_path)
-                        success("已推送到远程仓库")
-                    except RuntimeError as exc:
-                        if "up to date" in str(exc).lower() or "everything" in str(exc).lower():
-                            success("远程仓库已是最新")
-                        else:
-                            warning(f"推送失败: {exc}")
-                            console.print(f"    cd {repo_path}")
-                            console.print("    git push -u origin main")
-        else:
+        if not git.has_skills_dir(repo_path):
             with status_spinner("正在创建仓库结构 ..."):
                 git.init_repo_structure(repo_path)
             with status_spinner("正在提交并推送 ..."):
@@ -383,17 +1103,119 @@ def _action_repo() -> None:
                     success("已初始化并推送")
                 except RuntimeError as exc:
                     warning(f"推送失败: {exc}")
-                    console.print("  本地结构已创建，请手动推送:")
-                    console.print(f"    cd {repo_path}")
-                    console.print("    git push -u origin main")
+                    info("本地结构已创建，请手动推送。")
+        else:
+            info("该仓库已包含 skills/ 目录结构。")
     else:
         if not git.has_skills_dir(repo_path):
-            warning("该仓库无 skills/ 目录")
+            warning("该仓库无 skills/ 目录，可能不是有效的 skill 仓库。")
 
+    config.add_repo(alias, url, str(repo_path))
+    success(f"已连接 (别名: {alias})")
+
+
+def _action_settings() -> None:
+    """设置页面 — 配置默认平台、分支模式等"""
     config = _get_config()
-    config.set("repo.url", url)
-    config.set("repo.cache_path", str(repo_path))
-    success("已连接")
+
+    while True:
+        # 读取当前配置
+        default_platform = config.get("defaults.target_platform") or "未设置"
+        branch_mode = config.get("branch.mode") or "direct"
+        auto_merge = config.get("branch.auto_merge")
+        auto_merge_label = "关闭" if auto_merge == "false" else "开启"
+        cleanup = config.get("branch.cleanup")
+        cleanup_label = "关闭" if cleanup == "false" else "开启"
+
+        # 展示当前配置
+        from rich.table import Table
+        t = Table(title="[bold]当前配置[/bold]", border_style="cyan", pad_edge=True, show_lines=True)
+        t.add_column("配置项", style="bold", width=24)
+        t.add_column("当前值", style="cyan", width=16)
+        t.add_column("说明", style="dim", width=36)
+        t.add_row("默认平台", default_platform, "安装/更新/卸载时的默认平台")
+        t.add_row("分支模式", branch_mode, "direct=直推 / branch=分支协作")
+        t.add_row("自动合并", auto_merge_label, "分支模式下无冲突时自动合并")
+        t.add_row("自动清理分支", cleanup_label, "合并后删除远程分支")
+        console.print(t)
+        console.print()
+
+        choice = _ask(questionary.select(
+            "修改配置:",
+            choices=[
+                "修改默认平台",
+                "修改分支模式",
+                "修改自动合并",
+                "修改自动清理分支",
+                "← 返回",
+            ],
+            style=_QS,
+            instruction="(Esc 返回)",
+        ))
+        if choice is _CANCELLED or choice == "← 返回":
+            return
+
+        if choice == "修改默认平台":
+            registry = PlatformRegistry()
+            platforms = registry.all()
+            selected = _ask(questionary.select(
+                "选择默认平台:",
+                choices=[pc.name for pc in platforms] + ["清除默认"],
+                style=_QS,
+            ))
+            if selected is _CANCELLED:
+                continue
+            if selected == "清除默认":
+                config.delete("defaults.target_platform")
+                success("已清除默认平台。")
+            else:
+                config.set("defaults.target_platform", selected)
+                success(f"默认平台已设为 {selected}。")
+
+        elif choice == "修改分支模式":
+            selected = _ask(questionary.select(
+                "选择分支模式:",
+                choices=[
+                    questionary.Choice("direct — 直接推送到主分支", value="direct"),
+                    questionary.Choice("branch — 创建个人分支再合并", value="branch"),
+                ],
+                style=_QS,
+            ))
+            if selected is _CANCELLED:
+                continue
+            config.set("branch.mode", selected)
+            label = "直推模式" if selected == "direct" else "分支协作模式"
+            success(f"已切换到 {label}。")
+
+        elif choice == "修改自动合并":
+            new_val = _ask(questionary.select(
+                "自动合并:",
+                choices=[
+                    questionary.Choice("开启 — 无冲突时自动合并到主分支", value="true"),
+                    questionary.Choice("关闭 — 只推送分支，手动合并", value="false"),
+                ],
+                style=_QS,
+            ))
+            if new_val is _CANCELLED:
+                continue
+            config.set("branch.auto_merge", new_val)
+            success(f"自动合并已{'开启' if new_val == 'true' else '关闭'}。")
+
+        elif choice == "修改自动清理分支":
+            new_val = _ask(questionary.select(
+                "自动清理分支:",
+                choices=[
+                    questionary.Choice("开启 — 合并后自动删除远程分支", value="true"),
+                    questionary.Choice("关闭 — 保留远程分支", value="false"),
+                ],
+                style=_QS,
+            ))
+            if new_val is _CANCELLED:
+                continue
+            config.set("branch.cleanup", new_val)
+            success(f"自动清理分支已{'开启' if new_val == 'true' else '关闭'}。")
+
+        console.print()
 
 
 # ── main menu ────────────────────────────────────────────────────
@@ -402,7 +1224,12 @@ _MENU = [
     ("📋  概览", _action_overview),
     ("📥  安装 Skill", _action_install),
     ("📤  上传 Skill", _action_upload),
+    ("🔍  搜索 Skill", _action_search),
+    ("🔄  更新 Skill", _action_update),
+    ("🗑️   卸载 Skill", _action_remove),
+    ("📜  版本管理", _action_version_mgmt),
     ("🔗  仓库管理", _action_repo),
+    ("⚙️   设置", _action_settings),
     ("🚪  退出", None),
 ]
 
@@ -420,16 +1247,19 @@ def run_interactive() -> None:
         except Exception:
             pass
 
+    first_time = True
     try:
         while True:
-            _banner()
+            _banner(first_time=first_time)
+            first_time = False
+
             choice = _ask(questionary.select(
                 "操作:",
                 choices=[label for label, _ in _MENU],
                 style=_QS,
             ))
 
-            if choice is None:
+            if choice is _CANCELLED:
                 break
 
             action = dict(_MENU).get(choice)
@@ -438,15 +1268,7 @@ def run_interactive() -> None:
 
             console.print()
             action()
-
-            if action is not _action_overview:
-                console.print()
-                _ask(questionary.select(
-                    "",
-                    choices=["← 返回主菜单"],
-                    style=_QS,
-                    instruction="(Esc 返回)",
-                ))
+            _pause()
 
     except KeyboardInterrupt:
         pass

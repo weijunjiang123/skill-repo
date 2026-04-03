@@ -1,0 +1,8 @@
+default_install_hook_types = ["post-commit"]
+default_stages = ["post-commit"]
+
+[[repos]]
+repo = "local"
+hooks = [
+  { id = "sync-skills-artifacts", name = "Sync marketplace and skills README", entry = "python scripts/post_commit_sync.py", language = "system", pass_filenames = false, always_run = true, stages = ["post-commit"] },
+]

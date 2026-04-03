@@ -29,6 +29,7 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/skill_repo"]
+artifacts = ["src/skill_repo/_templates/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

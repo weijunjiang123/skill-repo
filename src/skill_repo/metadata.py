@@ -15,6 +15,9 @@ class SkillMetadata:
 
     name: str
     description: str
+    version: str = ""
+    author: str = ""
+    updated: str = ""
 
 
 @dataclass
@@ -52,6 +55,9 @@ class MetadataParser:
         return SkillMetadata(
             name=str(raw.get("name", "")),
             description=str(raw.get("description", "")),
+            version=str(raw.get("version", "")),
+            author=str(raw.get("author", "")),
+            updated=str(raw.get("updated", "")),
         )
 
     def validate(self, skill_dir: Path) -> list[str]:
@@ -72,7 +78,16 @@ class MetadataParser:
         return errors
 
     def format_frontmatter(self, metadata: SkillMetadata) -> str:
-        """将元数据格式化为 YAML frontmatter 字符串。"""
-        data = {"name": metadata.name, "description": metadata.description}
+        """将元数据格式化为 YAML frontmatter 字符串。
+
+        仅输出非空字段。name 和 description 始终输出。
+        """
+        data: dict[str, str] = {"name": metadata.name, "description": metadata.description}
+        if metadata.version:
+            data["version"] = metadata.version
+        if metadata.author:
+            data["author"] = metadata.author
+        if metadata.updated:
+            data["updated"] = metadata.updated
         body = yaml.dump(data, default_flow_style=False, allow_unicode=True, sort_keys=False).rstrip("\n")
         return f"---\n{body}\n---\n"

@@ -1,192 +1,242 @@
-# Skill Repo
+<div align="center">
 
-团队共享的 Code Agent Skill 管理工具。
+# 🧰 Skill Repo
 
-通过 GitHub / GitLab 等远程 Git 仓库，在团队间共享和管理 Claude Code、Codex、Kiro 的 Skill。支持 macOS、Linux、Windows。
+**把团队的 Code Agent Skill 管起来**
 
-## 为什么需要它
+用一个 Git 仓库，搞定 Claude Code / Codex / Kiro 的 Skill 共享、同步和版本管理。
 
-Code Agent 的 Skill 散落在每个人的本地目录里，团队协作时面临几个问题：
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey.svg)]()
 
-- 好用的 Skill 无法方便地分享给同事
-- 不同设备之间同步 Skill 很麻烦
-- 没有统一的地方管理和发现可用的 Skill
+[快速开始](#-快速开始) · [功能](#-功能一览) · [命令参考](#-命令参考) · [开发](#-开发)
 
-Skill Repo 用一个 Git 仓库作为中心，让团队成员可以上传、下载、同步 Skill，就像管理代码一样。
+</div>
 
-## 功能
+---
 
-**远程仓库管理**
-- 连接已有的 Skill 仓库（GitHub / GitLab，支持 HTTPS 和 SSH）
-- 一键初始化空仓库为标准 Skill 仓库（自动创建目录结构、同步脚本、prek 配置）
+## 😩 痛点
 
-**跨平台 Skill 安装**
-- 从远程仓库安装 Skill 到本地 Claude Code / Codex / Kiro
-- 支持按名称安装单个、批量安装全部
-- Claude Code 平台自动同步 command 文件
+你有没有遇到过这些情况：
 
-**Skill 上传与共享**
-- 从本地平台上传 Skill 到远程仓库
-- 自动 git commit + push，支持指定分类
-- 上传前自动验证 Skill 元数据完整性
+- 写了个好用的 Skill，想分享给同事，只能手动拷贝目录
+- 换了台电脑，之前调好的 Skill 全没了
+- 团队里谁有什么 Skill、哪个版本，完全是黑盒
+- 多个人改同一个 Skill，互相覆盖
 
-**交互式 TUI**
-- 菜单式操作，无需记忆命令参数
-- 支持方向键导航、Space 多选、Esc 返回
-- 美观的表格展示 Skill 概览
+Skill Repo 就是来解决这些问题的。
 
-**自动化维护**
-- 集成 prek（Git Hook 工具），提交时自动同步生成文件
-- 自动维护 `skills/README.md` 目录、`commands/*.md`、`.claude-plugin/manifest.json`
+## 💡 思路
 
-## 安装
+很简单 —— 用一个 Git 仓库当 Skill 的中心仓库，配一个 CLI 工具来操作。上传、安装、同步、版本管理，全部自动化。不需要懂 Git，不需要记命令，有交互式菜单。
 
-```bash
-pip install  git+https://github.com/weijunjiang123/skill-repo.git
+```
+你的 Skill ──上传──→ Git 仓库 ──安装──→ 同事的 Skill
+                        ↑
+                    版本管理、搜索、同步
 ```
 
-或使用 uv：
+## 🚀 快速开始
+
+**安装**（需要 Python 3.10+ 和 Git）
 
 ```bash
-uv tool install git+https://github.com/weijunjiang123/skill-repo.git
+pip install git+https://github.com/weijunjiang123/skill-repo.git
 ```
 
-## 快速开始
-
-### 1. 初始化一个新的 Skill 仓库
-
-在 GitHub / GitLab 上创建一个空仓库，然后：
+**30 秒上手**
 
 ```bash
-skill-repo init git@github.com:your-team/skills.git
-```
-
-这会自动创建标准目录结构并推送到远程。
-
-### 2. 或者连接已有的 Skill 仓库
-
-```bash
+# 1. 连接团队的 Skill 仓库
 skill-repo connect git@github.com:your-team/skills.git
-```
 
-### 3. 安装 Skill 到本地
+# 2. 看看有什么 Skill
+skill-repo install --target kiro --list
 
-```bash
-# 查看可用 Skill
-skill-repo install --target claude --list
+# 3. 装一个试试
+skill-repo install --target kiro --skill code-review
 
-# 安装单个
-skill-repo install --target kiro --skill my-skill
-
-# 安装全部
-skill-repo install --target claude --all
-```
-
-### 4. 上传本地 Skill 到仓库
-
-```bash
-# 查看本地 Skill
-skill-repo upload --source kiro --list
-
-# 上传到仓库
+# 4. 把自己的 Skill 分享出去
 skill-repo upload --source kiro --skill my-skill --category tools
 ```
 
-### 5. 交互式模式
-
-不想记命令？直接进入交互式菜单：
+**不想记命令？**
 
 ```bash
 skill-repo interactive
 ```
 
-## 命令一览
+进入交互式菜单，方向键选择，Space 多选，全程引导。
 
-| 命令 | 说明 |
-|------|------|
-| `skill-repo connect <url>` | 连接远程 Skill 仓库 |
-| `skill-repo init <url>` | 初始化空仓库为 Skill 仓库 |
-| `skill-repo install` | 从仓库安装 Skill 到本地平台 |
-| `skill-repo upload` | 上传本地 Skill 到仓库 |
-| `skill-repo status` | 查看仓库状态和 Skill 概览 |
-| `skill-repo config show` | 查看当前配置 |
-| `skill-repo config set <key> <value>` | 修改配置 |
-| `skill-repo prek setup` | 配置 prek Git Hook |
-| `skill-repo prek scan` | 扫描仓库 Skill 并检查元数据 |
-| `skill-repo interactive` | 进入交互式 TUI 模式 |
+## ✨ 功能一览
 
-## 支持的平台
+<table>
+<tr>
+<td width="50%">
+
+### 📥 安装 & 上传
+从仓库安装 Skill 到本地，或把本地 Skill 上传共享。支持单个、批量、按分类。上传后自动生成 README 和 manifest。
+
+### 🔍 搜索
+按名称、描述、分类模糊搜索。支持同时搜本地和远程。搜到了可以直接安装。
+
+### 🔄 更新 & 同步
+一键检查哪些 Skill 有新版本，选择性更新。支持 `--dry-run` 先看看再说。
+
+</td>
+<td width="50%">
+
+### 📜 版本管理
+每次上传自动记录变更历史。可以查看谁在什么时候改了什么，回退到任意版本，锁定安装指定版本。
+
+### 🌿 分支协作
+多人场景下，上传自动走个人分支，无冲突时自动合并。有冲突提示创建 PR，不会搞坏主分支。
+
+### 🖥️ 多平台 & 多仓库
+同时管理 Claude Code、Codex、Kiro 三个平台。可以连接多个仓库（公司 + 社区），通过别名区分。
+
+</td>
+</tr>
+</table>
+
+## 📖 命令参考
+
+<details>
+<summary><b>仓库管理</b></summary>
+
+```bash
+skill-repo connect <git-url>              # 连接远程仓库
+skill-repo connect <git-url> --alias team # 多仓库场景，指定别名
+skill-repo init <git-url>                 # 初始化空仓库
+skill-repo status                         # 查看仓库状态
+```
+
+</details>
+
+<details>
+<summary><b>Skill 操作</b></summary>
+
+```bash
+skill-repo install --target kiro --list           # 列出可用 Skill
+skill-repo install --target kiro --skill <name>    # 安装单个
+skill-repo install --target kiro --all             # 安装全部
+skill-repo upload --source kiro --skill <name>     # 上传到仓库
+skill-repo search <keyword>                        # 搜索
+skill-repo update --target kiro                    # 更新已安装的
+skill-repo update --target kiro --dry-run          # 只看不动
+skill-repo remove --target kiro --skill <name>     # 卸载
+skill-repo diff --target kiro --skill <name>       # 对比差异
+skill-repo create --name <name>                    # 创建新 Skill 脚手架
+```
+
+</details>
+
+<details>
+<summary><b>版本管理</b></summary>
+
+```bash
+skill-repo history --skill <name>                          # 查看变更历史
+skill-repo rollback --skill <name> --to <commit> --push    # 回退版本
+skill-repo pin --skill <name> --commit <hash> --target kiro # 安装指定版本
+```
+
+</details>
+
+<details>
+<summary><b>协作 & 配置</b></summary>
+
+```bash
+skill-repo branch mode branch             # 切换到分支协作模式
+skill-repo branch list                    # 查看待合并分支
+skill-repo branch merge <branch-name>     # 合并分支
+skill-repo config set defaults.target_platform kiro  # 设置默认平台
+skill-repo interactive                    # 交互式 TUI（设置页面里也能改配置）
+```
+
+</details>
+
+## 🏗️ Skill 仓库长什么样
+
+```
+your-skill-repo/
+├── skills/
+│   ├── README.md                  ← 自动生成的 Skill 目录
+│   ├── tools/
+│   │   └── code-review/
+│   │       └── SKILL.md
+│   └── workflow/
+│       └── deploy-helper/
+│           └── SKILL.md
+├── commands/                       ← Claude Code command（自动生成）
+├── .claude-plugin/manifest.json    ← Claude marketplace 清单（自动生成）
+├── scripts/                        ← 同步脚本（给 prek 用）
+└── prek.toml
+```
+
+每个 Skill 就是一个目录 + 一个 `SKILL.md`：
+
+```markdown
+---
+name: "code-review"
+description: "代码审查助手，自动检查常见问题并给出修改建议"
+version: "0.2.0"
+author: "alice"
+updated: "2025-03-15"
+---
+
+你是一个代码审查助手...
+```
+
+## 🖥️ 支持的平台
 
 | 平台 | 本地路径 | 环境变量覆盖 |
-|------|---------|-------------|
+|:-----|:---------|:-------------|
 | Claude Code | `~/.claude/skills` | `CLAUDE_SKILLS_DIR` |
 | Codex | `~/.codex/skills` | `CODEX_SKILLS_DIR` |
 | Kiro | `~/.kiro/skills` | `KIRO_SKILLS_DIR` |
 
-## Skill 仓库结构
-
-初始化后的远程仓库结构：
-
-```
-your-skill-repo/
-├── README.md                          # 项目说明（自动生成）
-├── skills/                            # Skill 集合
-│   ├── README.md                      # Skill 目录（自动维护）
-│   ├── tools/                         # 分类目录
-│   │   └── my-skill/
-│   │       └── SKILL.md               # Skill 元数据 + 内容
-│   └── workflow/
-│       └── another-skill/
-│           └── SKILL.md
-├── commands/                          # Claude Code command 文件（自动生成）
-├── .claude-plugin/manifest.json       # Claude marketplace 清单（自动生成）
-├── scripts/                           # 同步脚本
-├── prek.toml                          # Git Hook 配置
-└── pyproject.toml
-```
-
-每个 Skill 是一个目录，必须包含 `SKILL.md` 文件：
-
-```yaml
----
-name: "my-skill"
-description: "这个 Skill 做什么"
----
-
-Skill 的详细说明和 prompt 内容...
-```
-
-## 配置
-
-配置文件位置：
-- Linux / macOS: `~/.config/skill-repo/config.toml`
-- Windows: `%APPDATA%/skill-repo/config.toml`
-
-支持的配置项：
-
-| 键 | 说明 |
-|----|------|
-| `repo.url` | 已连接的远程仓库 URL |
-| `repo.cache_path` | 本地缓存路径 |
-| `defaults.target_platform` | 默认安装目标平台 |
-
-## 开发
+## 🛠️ 开发
 
 ```bash
-# 克隆项目
-git clone <this-repo>
+git clone https://github.com/weijunjiang123/skill-repo.git
 cd skill-repo
-
-# 安装依赖
 uv sync --group dev
-
-# 运行测试
-uv run pytest
-
-# 本地运行 CLI
-uv run skill-repo --help
+uv run pytest          # 跑测试
+uv run skill-repo --help  # 本地运行
 ```
 
-## License
+项目结构：
+
+```
+src/skill_repo/
+├── cli.py              # CLI 命令（rich-click）
+├── interactive.py      # 交互式 TUI（questionary + rich）
+├── git_manager.py      # Git 操作（调用系统 git，不用 gitpython）
+├── skill_manager.py    # Skill 发现、安装、同步
+├── config_manager.py   # TOML 配置
+├── metadata.py         # SKILL.md 解析
+├── platforms.py        # 平台路径
+├── _console.py         # 终端输出组件
+└── _templates/         # 仓库初始化模板（独立文件，方便改）
+```
+
+几个开发时需要注意的点：
+
+- 调用系统 `git` 而非 gitpython，用户本地的 SSH key 和 credential helper 直接能用
+- `_templates/` 是独立文件不是 Python 字符串，改模板直接编辑文件就行
+- 上传后的同步（README、commands、manifest）内置在 `SkillManager.sync_all()` 里，不依赖外部脚本
+- Windows 上 `shutil.rmtree` 不能处理符号链接，`remove_skill` 已做兼容
+- 测试用 pytest + hypothesis
+
+## 📄 License
 
 MIT
+
+---
+
+<div align="center">
+
+如果觉得有用，给个 ⭐ 吧
+
+</div>

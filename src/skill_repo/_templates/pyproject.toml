@@ -1,0 +1,5 @@
+[project]
+name = "skill-repo"
+version = "0.1.0"
+description = "共享 Skill 仓库"
+requires-python = ">=3.10"
