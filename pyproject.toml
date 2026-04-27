@@ -1,6 +1,6 @@
 [project]
 name = "skill-repo"
-version = "0.1.0"
+version = "0.2.0"
 description = "Skill 仓库 CLI 工具 - 管理和共享 code agent 技能"
 readme = "README.md"
 requires-python = ">=3.8"

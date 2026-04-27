@@ -41,9 +41,25 @@ Skill Repo 就是来解决这些问题的。
 
 **安装**（需要 Python 3.8+ 和 Git）
 
+推荐用 `pipx` 安装 CLI，避免污染当前 Python 环境：
+
 ```bash
-pip install git+https://github.com/weijunjiang123/skill-repo.git
+python -m pip install --user pipx
+python -m pipx ensurepath
+pipx install "git+https://github.com/weijunjiang123/skill-repo.git@v0.2.0"
+skill-repo --version
 ```
+
+如果你之前已经装过旧版本，直接 `pipx install ...` 可能不会覆盖现有命令。请用：
+
+```bash
+pipx upgrade skill-repo --pip-args "--upgrade --force-reinstall"
+# 或者完全重装
+pipx uninstall skill-repo
+pipx install "git+https://github.com/weijunjiang123/skill-repo.git@v0.2.0"
+```
+
+从 GitHub 安装时建议固定 tag（如 `@v0.2.0`）。如果安装默认分支，只有代码合并到默认分支后才会生效。
 
 **30 秒上手**
 
