@@ -45,12 +45,12 @@ Skill Repo 就是来解决这些问题的。
 
 ```bash
 # macOS / Linux
-curl -fsSL https://raw.githubusercontent.com/weijunjiang123/skill-repo/main/scripts/install-binary.sh | sh
+curl -fsSL https://raw.githubusercontent.com/weijunjiang123/skill-repo/v0.2.0/scripts/install-binary.sh | sh
 ```
 
 ```powershell
 # Windows PowerShell
-irm https://raw.githubusercontent.com/weijunjiang123/skill-repo/main/scripts/install-binary.ps1 | iex
+irm https://raw.githubusercontent.com/weijunjiang123/skill-repo/v0.2.0/scripts/install-binary.ps1 | iex
 ```
 
 安装脚本会自动识别系统和 CPU 架构，下载最新 Release 中匹配的 `skill-repo` 可执行文件，并把安装目录加入 PATH。CLI 连接 / 上传仓库时仍会调用本机 `git`；如果没有 Git，会在使用相关命令时提示。验证：
@@ -65,12 +65,12 @@ skill-repo --version
 
 ```bash
 # macOS / Linux
-curl -fsSL https://raw.githubusercontent.com/weijunjiang123/skill-repo/main/scripts/install-binary.sh | SKILL_REPO_VERSION=v0.2.0 sh
+curl -fsSL https://raw.githubusercontent.com/weijunjiang123/skill-repo/v0.2.0/scripts/install-binary.sh | SKILL_REPO_VERSION=v0.2.0 sh
 ```
 
 ```powershell
 # Windows PowerShell
-$env:SKILL_REPO_VERSION="v0.2.0"; irm https://raw.githubusercontent.com/weijunjiang123/skill-repo/main/scripts/install-binary.ps1 | iex
+$env:SKILL_REPO_VERSION="v0.2.0"; irm https://raw.githubusercontent.com/weijunjiang123/skill-repo/v0.2.0/scripts/install-binary.ps1 | iex
 ```
 
 **备用安装**（适合开发者）

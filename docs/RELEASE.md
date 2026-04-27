@@ -85,11 +85,11 @@ Keep these files in sync for every release:
 9. Ask users to install or upgrade with the zero-config installer:
 
    ```bash
-   curl -fsSL https://raw.githubusercontent.com/weijunjiang123/skill-repo/main/scripts/install-binary.sh | sh
+   curl -fsSL https://raw.githubusercontent.com/weijunjiang123/skill-repo/v0.2.0/scripts/install-binary.sh | sh
    ```
 
    ```powershell
-   irm https://raw.githubusercontent.com/weijunjiang123/skill-repo/main/scripts/install-binary.ps1 | iex
+   irm https://raw.githubusercontent.com/weijunjiang123/skill-repo/v0.2.0/scripts/install-binary.ps1 | iex
    ```
 
 ## Source install fallback
