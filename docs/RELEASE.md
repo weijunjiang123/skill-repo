@@ -1,7 +1,7 @@
 # Release Process
 
 This project ships a CLI, so each user-visible release must be versioned,
-tagged, and installable from a stable Git ref.
+tagged, and installable from stable GitHub Release binaries.
 
 ## Why an install can look stale
 
@@ -39,11 +39,12 @@ Keep these files in sync for every release:
 - `uv.lock`
 - install snippets in `README.md`
 - install snippets in `src/skill_repo/_templates/default_skill_repo_cli.md`
+- release binary names in `.github/workflows/release-binaries.yml` and install scripts, if a platform changes
 
 ## Release checklist
 
 1. Update the version in `pyproject.toml` and `src/skill_repo/__init__.py`.
-2. Update README/template install examples to the new tag, for example `@v0.2.0`.
+2. Update README/template install examples to the new tag, for example `v0.2.0`.
 3. Run targeted and full tests:
 
    ```bash
@@ -68,20 +69,35 @@ Keep these files in sync for every release:
    git push origin v0.2.0
    ```
 
-7. Ask users to install or upgrade from the tag:
+7. Create and publish a GitHub Release for the tag. The `Release binaries`
+   workflow runs on `release.published`, builds Nuitka executables, verifies
+   `skill-repo --version`, and uploads these assets:
+
+   - `skill-repo-linux-x64`
+   - `skill-repo-linux-arm64`
+   - `skill-repo-macos-x64`
+   - `skill-repo-macos-arm64`
+   - `skill-repo-windows-x64.exe`
+
+8. If a release upload needs to be retried, run the `Release binaries` workflow
+   manually with the existing tag.
+
+9. Ask users to install or upgrade with the zero-config installer:
 
    ```bash
-   pipx install "git+https://github.com/weijunjiang123/skill-repo.git@v0.2.0"
-   pipx upgrade skill-repo --pip-args "--upgrade --force-reinstall"
-   skill-repo --version
+   curl -fsSL https://raw.githubusercontent.com/weijunjiang123/skill-repo/main/scripts/install-binary.sh | sh
    ```
 
-## Recommended future improvement
+   ```powershell
+   irm https://raw.githubusercontent.com/weijunjiang123/skill-repo/main/scripts/install-binary.ps1 | iex
+   ```
 
-Publish releases to PyPI once the package name and release cadence are stable.
-Then the user-facing install path becomes simpler:
+## Source install fallback
+
+If binary assets are not available for a platform, developers can still install
+from a tagged Git ref:
 
 ```bash
-pipx install skill-repo
-pipx upgrade skill-repo
+pipx install "git+https://github.com/weijunjiang123/skill-repo.git@v0.2.0"
+skill-repo --version
 ```

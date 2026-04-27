@@ -39,27 +39,47 @@ Skill Repo 就是来解决这些问题的。
 
 ## 🚀 快速开始
 
-**安装**（需要 Python 3.8+ 和 Git）
+**零配置安装**（推荐）
 
-推荐用 `pipx` 安装 CLI，避免污染当前 Python 环境：
+从 GitHub Release 下载已编译好的可执行文件，不需要提前安装 Python / pip / pipx：
+
+```bash
+# macOS / Linux
+curl -fsSL https://raw.githubusercontent.com/weijunjiang123/skill-repo/main/scripts/install-binary.sh | sh
+```
+
+```powershell
+# Windows PowerShell
+irm https://raw.githubusercontent.com/weijunjiang123/skill-repo/main/scripts/install-binary.ps1 | iex
+```
+
+安装脚本会自动识别系统和 CPU 架构，下载最新 Release 中匹配的 `skill-repo` 可执行文件，并把安装目录加入 PATH。CLI 连接 / 上传仓库时仍会调用本机 `git`；如果没有 Git，会在使用相关命令时提示。验证：
+
+```bash
+skill-repo --version
+```
+
+安装指定版本：
+
+```bash
+# macOS / Linux
+curl -fsSL https://raw.githubusercontent.com/weijunjiang123/skill-repo/main/scripts/install-binary.sh | SKILL_REPO_VERSION=v0.2.0 sh
+```
+
+```powershell
+# Windows PowerShell
+$env:SKILL_REPO_VERSION="v0.2.0"; irm https://raw.githubusercontent.com/weijunjiang123/skill-repo/main/scripts/install-binary.ps1 | iex
+```
+
+**备用安装**（适合开发者）
+
+如果你希望直接从源码安装，仍可使用 `pipx`：
 
 ```bash
 python -m pip install --user pipx
 python -m pipx ensurepath
 pipx install "git+https://github.com/weijunjiang123/skill-repo.git@v0.2.0"
-skill-repo --version
 ```
-
-如果你之前已经装过旧版本，直接 `pipx install ...` 可能不会覆盖现有命令。请用：
-
-```bash
-pipx upgrade skill-repo --pip-args "--upgrade --force-reinstall"
-# 或者完全重装
-pipx uninstall skill-repo
-pipx install "git+https://github.com/weijunjiang123/skill-repo.git@v0.2.0"
-```
-
-从 GitHub 安装时建议固定 tag（如 `@v0.2.0`）。如果安装默认分支，只有代码合并到默认分支后才会生效。
 
 **30 秒上手**
 
@@ -225,6 +245,16 @@ uv sync --group dev
 uv run pytest          # 跑测试
 uv run skill-repo --help  # 本地运行
 ```
+
+本地编译可执行文件：
+
+```bash
+python -m pip install -e . nuitka ordered-set zstandard
+python scripts/build_binary.py
+./dist/skill-repo-* --version
+```
+
+发布 GitHub Release 时，`.github/workflows/release-binaries.yml` 会自动在 Linux、macOS、Windows 上用 Nuitka 编译并上传可执行文件。
 
 项目结构：
 

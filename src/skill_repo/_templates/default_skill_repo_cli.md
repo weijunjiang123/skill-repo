@@ -12,16 +12,14 @@ description: "操作 skill-repo CLI 工具，管理团队共享的 Code Agent Sk
 如果用户尚未安装 skill-repo，使用以下方式安装：
 
 ```bash
-# 推荐用 pipx 安装 CLI，避免污染当前 Python 环境
-python -m pip install --user pipx
-python -m pipx ensurepath
+# macOS / Linux：自动下载 GitHub Release 可执行文件
+curl -fsSL https://raw.githubusercontent.com/weijunjiang123/skill-repo/main/scripts/install-binary.sh | sh
+
+# Windows PowerShell
+irm https://raw.githubusercontent.com/weijunjiang123/skill-repo/main/scripts/install-binary.ps1 | iex
+
+# 开发者备用：从源码安装
 pipx install "git+https://github.com/weijunjiang123/skill-repo.git@v0.2.0"
-
-# 已安装旧版本时强制升级
-pipx upgrade skill-repo --pip-args "--upgrade --force-reinstall"
-
-# 或使用 uv 安装工具
-uv tool install "git+https://github.com/weijunjiang123/skill-repo.git@v0.2.0"
 ```
 
 安装后可通过 `skill-repo --version` 和 `skill-repo --help` 验证。
