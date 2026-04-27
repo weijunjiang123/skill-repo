@@ -61,6 +61,8 @@ skill-repo --version
 
 安装指定版本：
 
+用 pipx 安装（不会污染环境）
+
 ```bash
 # macOS / Linux
 curl -fsSL https://raw.githubusercontent.com/weijunjiang123/skill-repo/main/scripts/install-binary.sh | SKILL_REPO_VERSION=v0.2.0 sh
@@ -80,6 +82,11 @@ python -m pip install --user pipx
 python -m pipx ensurepath
 pipx install "git+https://github.com/weijunjiang123/skill-repo.git@v0.2.0"
 ```
+安装完成后直接可用：
+
+``` bash
+skill-repo interactive
+````
 
 **30 秒上手**
 
