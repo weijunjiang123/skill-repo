@@ -11,8 +11,8 @@ from pathlib import Path
 class PlatformConfig:
     """平台配置数据类"""
 
-    name: str  # "claude", "codex", "kiro"
-    label: str  # "Claude Code", "Codex", "Kiro"
+    name: str  # "claude", "codex", "kiro", "hermes"
+    label: str  # "Claude Code", "Codex", "Kiro", "Hermes Agent"
     skills_dir: Path  # 本地 skill 存储路径
     has_commands: bool  # 是否需要同步 command 文件
     commands_dir: Path | None  # command 文件目录
@@ -25,6 +25,7 @@ def _build_default_platforms() -> dict[str, PlatformConfig]:
     - CLAUDE_SKILLS_DIR: 覆盖 ~/.claude，skills/commands 为其子目录
     - CODEX_SKILLS_DIR: 覆盖 ~/.codex/skills
     - KIRO_SKILLS_DIR: 覆盖 ~/.kiro/skills
+    - HERMES_SKILLS_DIR: 覆盖 ~/.hermes/skills
     """
     home = Path.home()
 
@@ -58,7 +59,21 @@ def _build_default_platforms() -> dict[str, PlatformConfig]:
         commands_dir=None,
     )
 
-    return {p.name: p for p in (claude, codex, kiro)}
+    # Hermes: env var directly overrides the skills dir
+    hermes_skills = (
+        Path(os.environ["HERMES_SKILLS_DIR"])
+        if "HERMES_SKILLS_DIR" in os.environ
+        else home / ".hermes" / "skills"
+    )
+    hermes = PlatformConfig(
+        name="hermes",
+        label="Hermes Agent",
+        skills_dir=hermes_skills,
+        has_commands=False,
+        commands_dir=None,
+    )
+
+    return {p.name: p for p in (claude, codex, kiro, hermes)}
 
 
 class PlatformRegistry:

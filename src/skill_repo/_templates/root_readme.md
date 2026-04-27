@@ -1,6 +1,6 @@
 # Skill Repo
 
-团队共享的 Code Agent Skill 仓库，支持 Claude Code / Codex / Kiro。
+团队共享的 Code Agent Skill 仓库，支持 Claude Code / Codex / Kiro / Hermes Agent。
 
 ## 快速开始
 
@@ -24,6 +24,9 @@ skill-repo install --target claude --all
 
 # 安装单个到 Kiro
 skill-repo install --target kiro --skill <name>
+
+# 安装单个到 Hermes Agent
+skill-repo install --target hermes --skill <name>
 
 # 交互式模式
 skill-repo interactive

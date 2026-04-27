@@ -4,7 +4,7 @@
 
 **把团队的 Code Agent Skill 管起来**
 
-用一个 Git 仓库，搞定 Claude Code / Codex / Kiro 的 Skill 共享、同步和版本管理。
+用一个 Git 仓库，搞定 Claude Code / Codex / Kiro / Hermes Agent 的 Skill 共享、同步和版本管理。
 
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
@@ -195,6 +195,7 @@ updated: "2025-03-15"
 | Claude Code | `~/.claude/skills` | `CLAUDE_SKILLS_DIR` |
 | Codex | `~/.codex/skills` | `CODEX_SKILLS_DIR` |
 | Kiro | `~/.kiro/skills` | `KIRO_SKILLS_DIR` |
+| Hermes Agent | `~/.hermes/skills` | `HERMES_SKILLS_DIR` |
 
 ## 🛠️ 开发
 
