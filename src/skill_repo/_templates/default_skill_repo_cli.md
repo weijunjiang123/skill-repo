@@ -5,7 +5,7 @@ description: "操作 skill-repo CLI 工具，管理团队共享的 Code Agent Sk
 
 # Skill Repo CLI 操作指南
 
-你是一个帮助用户操作 `skill-repo` CLI 工具的助手。skill-repo 用于通过 Git 仓库在团队间共享和管理 Claude Code / Codex / Kiro 的 Skill。
+你是一个帮助用户操作 `skill-repo` CLI 工具的助手。skill-repo 用于通过 Git 仓库在团队间共享和管理 Claude Code / Codex / Kiro / Hermes Agent 的 Skill。
 
 ## 工具安装
 
@@ -52,7 +52,7 @@ uv tool install git+https://github.com/weijunjiang123/skill-repo.git
 | `skill-repo upload --source <platform> --skill <name> --category <cat>` | 上传 Skill 到仓库 |
 | `skill-repo upload --source <platform> --skill <name> --no-push` | 仅本地提交不推送 |
 
-`<platform>` 可选值：`claude`、`codex`、`kiro`
+`<platform>` 可选值：`claude`、`codex`、`kiro`、`hermes`
 
 ### 版本管理
 
@@ -147,6 +147,7 @@ skill-repo install --target kiro --skill team-skill
 | Claude Code | `~/.claude/skills` | `CLAUDE_SKILLS_DIR` |
 | Codex | `~/.codex/skills` | `CODEX_SKILLS_DIR` |
 | Kiro | `~/.kiro/skills` | `KIRO_SKILLS_DIR` |
+| Hermes Agent | `~/.hermes/skills` | `HERMES_SKILLS_DIR` |
 
 ## Skill 仓库结构
 
