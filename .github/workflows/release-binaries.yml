@@ -98,3 +98,20 @@ jobs:
         run: |
           gh release view "$TAG_NAME" >/dev/null
           gh release upload "$TAG_NAME" "dist/${{ matrix.asset_name }}" --clobber
+
+  upload-installers:
+    name: Upload installer scripts
+    needs: test
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Upload release assets
+        if: ${{ github.event_name == 'release' || github.event_name == 'workflow_dispatch' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ github.event.release.tag_name || github.event.inputs.tag }}
+        run: |
+          gh release view "$TAG_NAME" >/dev/null
+          gh release upload "$TAG_NAME" scripts/install-binary.sh scripts/install-binary.ps1 --clobber

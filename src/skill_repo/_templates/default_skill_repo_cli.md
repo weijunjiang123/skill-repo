@@ -13,10 +13,10 @@ description: "操作 skill-repo CLI 工具，管理团队共享的 Code Agent Sk
 
 ```bash
 # macOS / Linux：自动下载 GitHub Release 可执行文件
-curl -fsSL https://raw.githubusercontent.com/weijunjiang123/skill-repo/v0.2.0/scripts/install-binary.sh | sh
+curl -fsSL https://github.com/weijunjiang123/skill-repo/releases/latest/download/install-binary.sh | sh
 
 # Windows PowerShell
-irm https://raw.githubusercontent.com/weijunjiang123/skill-repo/v0.2.0/scripts/install-binary.ps1 | iex
+irm https://github.com/weijunjiang123/skill-repo/releases/latest/download/install-binary.ps1 | iex
 
 # 开发者备用：从源码安装
 pipx install "git+https://github.com/weijunjiang123/skill-repo.git@v0.2.0"

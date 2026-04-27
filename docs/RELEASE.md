@@ -78,6 +78,8 @@ Keep these files in sync for every release:
    - `skill-repo-macos-x64`
    - `skill-repo-macos-arm64`
    - `skill-repo-windows-x64.exe`
+   - `install-binary.sh`
+   - `install-binary.ps1`
 
 8. If a release upload needs to be retried, run the `Release binaries` workflow
    manually with the existing tag.
@@ -85,11 +87,11 @@ Keep these files in sync for every release:
 9. Ask users to install or upgrade with the zero-config installer:
 
    ```bash
-   curl -fsSL https://raw.githubusercontent.com/weijunjiang123/skill-repo/v0.2.0/scripts/install-binary.sh | sh
+   curl -fsSL https://github.com/weijunjiang123/skill-repo/releases/latest/download/install-binary.sh | sh
    ```
 
    ```powershell
-   irm https://raw.githubusercontent.com/weijunjiang123/skill-repo/v0.2.0/scripts/install-binary.ps1 | iex
+   irm https://github.com/weijunjiang123/skill-repo/releases/latest/download/install-binary.ps1 | iex
    ```
 
 ## Source install fallback
