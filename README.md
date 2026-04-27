@@ -51,14 +51,14 @@ pip install git+https://github.com/weijunjiang123/skill-repo.git
 # 1. 连接团队的 Skill 仓库
 skill-repo connect git@github.com:your-team/skills.git
 
-# 2. 看看有什么 Skill
-skill-repo install --target kiro --list
+# 2. 看看有什么 Skill（也支持 hermes）
+skill-repo install --target hermes --list
 
 # 3. 装一个试试
-skill-repo install --target kiro --skill code-review
+skill-repo install --target hermes --skill code-review
 
 # 4. 把自己的 Skill 分享出去
-skill-repo upload --source kiro --skill my-skill --category tools
+skill-repo upload --source hermes --skill my-skill --category tools
 ```
 
 **不想记命令？**
@@ -196,6 +196,9 @@ updated: "2025-03-15"
 | Codex | `~/.codex/skills` | `CODEX_SKILLS_DIR` |
 | Kiro | `~/.kiro/skills` | `KIRO_SKILLS_DIR` |
 | Hermes Agent | `~/.hermes/skills` | `HERMES_SKILLS_DIR` |
+
+Hermes Agent 支持分类目录结构，例如 `~/.hermes/skills/apple/apple-notes/SKILL.md`，
+`skill-repo` 会递归扫描分类下的 skill。
 
 ## 🛠️ 开发
 
