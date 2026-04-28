@@ -35,6 +35,7 @@ def _build_manager(tmp_path: Path, commands_dir: Path | None = None) -> tuple[Sk
     claude_base = platform_base / "claude"
     codex_skills = platform_base / "codex" / "skills"
     kiro_skills = platform_base / "kiro" / "skills"
+    hermes_skills = platform_base / "hermes" / "skills"
 
     registry = PlatformRegistry.__new__(PlatformRegistry)
     registry._platforms = {
@@ -56,6 +57,13 @@ def _build_manager(tmp_path: Path, commands_dir: Path | None = None) -> tuple[Sk
             name="kiro",
             label="Kiro",
             skills_dir=kiro_skills,
+            has_commands=False,
+            commands_dir=None,
+        ),
+        "hermes": PlatformConfig(
+            name="hermes",
+            label="Hermes Agent",
+            skills_dir=hermes_skills,
             has_commands=False,
             commands_dir=None,
         ),
@@ -133,6 +141,17 @@ class TestDiscoverSkills:
 
         found = manager.discover_skills(skills_dir)
         assert len(found) == 1
+
+    def test_skip_hidden_directories(self, tmp_path: Path):
+        skills_dir = tmp_path / "skills"
+        _make_skill(skills_dir, "ok")
+        hidden_skill = skills_dir / ".hub" / "quarantine" / "hidden"
+        hidden_skill.mkdir(parents=True)
+        (hidden_skill / "SKILL.md").write_text('---\nname: "hidden"\ndescription: "x"\n---\n')
+        manager, _ = _build_manager(tmp_path)
+
+        found = manager.discover_skills(skills_dir)
+        assert [skill.metadata.name for skill in found] == ["ok"]
 
 
 # ---------------------------------------------------------------------------
@@ -216,6 +235,19 @@ class TestInstallSkill:
         assert cmd_dest.exists()
         assert cmd_dest.read_text() == "# Command\nDo stuff"
 
+    def test_install_to_hermes(self, tmp_path: Path):
+        skills_dir = tmp_path / "skills"
+        _make_skill(skills_dir, "my-skill")
+        manager, registry = _build_manager(tmp_path)
+
+        skill_info = manager.discover_skills(skills_dir)[0]
+        manager.install_skill(skill_info, "hermes")
+
+        dest = registry.get("hermes").skills_dir / "my-skill"
+        assert dest.is_dir()
+        assert (dest / "SKILL.md").exists()
+        assert (dest / "prompt.txt").read_text() == "hello"
+
     def test_install_overwrites_existing_skill(self, tmp_path: Path):
         skills_dir = tmp_path / "skills"
         _make_skill(skills_dir, "my-skill")
@@ -255,6 +287,46 @@ class TestInstallAll:
         skills_dir.mkdir()
         manager, _ = _build_manager(tmp_path)
         assert manager.install_all(skills_dir, "kiro") == 0
+
+
+# ---------------------------------------------------------------------------
+# list_installed / remove_skill
+# ---------------------------------------------------------------------------
+
+class TestInstalledSkills:
+    def test_list_installed_scans_categorized_skills(self, tmp_path: Path):
+        manager, registry = _build_manager(tmp_path)
+        hermes_dir = registry.get("hermes").skills_dir
+        _make_skill(hermes_dir, "apple-notes", category="apple")
+        _make_skill(hermes_dir, "github-pr", category="github")
+
+        installed = manager.list_installed("hermes")
+
+        assert {skill.metadata.name for skill in installed} == {"apple-notes", "github-pr"}
+        assert {skill.category for skill in installed} == {"apple", "github"}
+
+    def test_find_installed_matches_directory_name(self, tmp_path: Path):
+        manager, registry = _build_manager(tmp_path)
+        hermes_dir = registry.get("hermes").skills_dir
+        skill_dir = hermes_dir / "apple" / "apple-notes"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text(
+            '---\nname: "notes"\ndescription: "desc"\n---\n',
+            encoding="utf-8",
+        )
+
+        found = manager.find_installed("apple-notes", "hermes")
+
+        assert found is not None
+        assert found.source_path == skill_dir
+
+    def test_remove_skill_deletes_categorized_skill(self, tmp_path: Path):
+        manager, registry = _build_manager(tmp_path)
+        hermes_dir = registry.get("hermes").skills_dir
+        _make_skill(hermes_dir, "apple-notes", category="apple")
+
+        assert manager.remove_skill("apple-notes", "hermes") is True
+        assert not (hermes_dir / "apple" / "apple-notes").exists()
 
 
 # ---------------------------------------------------------------------------

@@ -50,9 +50,9 @@ class SkillManager:
             return skills
 
         for skill_md in sorted(skills_dir.rglob("SKILL.md")):
-            # Skip private directories (any ancestor starting with _)
+            # Skip private/hidden directories (any ancestor starting with _ or .)
             rel = skill_md.relative_to(skills_dir)
-            if any(part.startswith("_") for part in rel.parts):
+            if any(part.startswith("_") or part.startswith(".") for part in rel.parts):
                 continue
 
             skill_dir = skill_md.parent
@@ -127,7 +127,8 @@ class SkillManager:
         安全处理符号链接和普通目录两种情况。
         """
         platform_config = self.platforms.get(target_platform)
-        dest = platform_config.skills_dir / skill_name
+        installed = self.find_installed(skill_name, target_platform)
+        dest = installed.source_path if installed is not None else platform_config.skills_dir / skill_name
         if not dest.exists() and not dest.is_symlink():
             return False
         if dest.is_symlink():
@@ -148,15 +149,14 @@ class SkillManager:
     def list_installed(self, target_platform: str) -> list[SkillInfo]:
         """列出目标平台已安装的 skill。"""
         platform_config = self.platforms.get(target_platform)
-        skills_dir = platform_config.skills_dir
-        skills: list[SkillInfo] = []
-        if not skills_dir.is_dir():
-            return skills
-        for child in sorted(skills_dir.iterdir()):
-            if child.is_dir() and (child / "SKILL.md").exists():
-                metadata = self.parser.parse(child / "SKILL.md")
-                skills.append(SkillInfo(metadata=metadata, category="installed", source_path=child))
-        return skills
+        return self.discover_skills(platform_config.skills_dir)
+
+    def find_installed(self, skill_name: str, target_platform: str) -> SkillInfo | None:
+        """按 metadata.name 或目录名查找目标平台已安装的 skill。"""
+        for skill in self.list_installed(target_platform):
+            if skill.metadata.name == skill_name or skill.source_path.name == skill_name:
+                return skill
+        return None
 
     def diff_skills(
         self, skills_dir: Path, target_platform: str,

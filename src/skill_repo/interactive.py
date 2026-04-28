@@ -222,12 +222,12 @@ def _action_overview() -> None:
     # 本地平台摘要
     console.print()
     registry = PlatformRegistry()
-    parser = MetadataParser()
+    local_sm = _get_skill_manager()
     for pc in registry.all():
         if not pc.skills_dir.is_dir():
             console.print(f"  [bold]{pc.label}[/bold]  [dim]— 未安装[/dim]")
             continue
-        count = sum(1 for d in pc.skills_dir.iterdir() if d.is_dir() and (d / "SKILL.md").exists())
+        count = len(local_sm.list_installed(pc.name))
         console.print(f"  [bold]{pc.label}[/bold]  [success]{count}[/success] 个 skill")
 
     # 提供展开详情的选项
@@ -260,11 +260,7 @@ def _action_overview() -> None:
         if not pc.skills_dir.is_dir():
             warning(f"{pc.label} 目录不存在")
             return
-        local_skills: list[SkillInfo] = []
-        for child in sorted(pc.skills_dir.iterdir()):
-            if child.is_dir() and (child / "SKILL.md").exists():
-                meta = parser.parse(child / "SKILL.md")
-                local_skills.append(SkillInfo(metadata=meta, category="local", source_path=child))
+        local_skills = local_sm.list_installed(platform_name)
         if local_skills:
             console.print(skill_table(local_skills, title=f"{pc.label} 本地 Skill"))
         else:
@@ -338,6 +334,7 @@ def _action_upload() -> None:
     _url, cache_path = conn
     registry = PlatformRegistry()
     parser = MetadataParser()
+    sm = _get_skill_manager(cache_path)
 
     # 选来源平台
     platform_name = _pick_platform("从哪个平台上传?")
@@ -346,12 +343,7 @@ def _action_upload() -> None:
     source = registry.get(platform_name)
 
     # 扫描本地 skill
-    local_skills: list[SkillInfo] = []
-    if source.skills_dir.is_dir():
-        for child in sorted(source.skills_dir.iterdir()):
-            if child.is_dir() and (child / "SKILL.md").exists():
-                meta = parser.parse(child / "SKILL.md")
-                local_skills.append(SkillInfo(metadata=meta, category="local", source_path=child))
+    local_skills = sm.list_installed(platform_name)
 
     if not local_skills:
         warning(f"{source.label} 平台暂无 skill")
@@ -401,7 +393,7 @@ def _action_upload() -> None:
 
     # 选分类（统一分类）
     skills_dir = cache_path / "skills"
-    cats = sorted(d.name for d in skills_dir.iterdir() if d.is_dir() and not d.name.startswith("_")) if skills_dir.is_dir() else []
+    cats = sorted(d.name for d in skills_dir.iterdir() if d.is_dir() and not d.name.startswith(("_", "."))) if skills_dir.is_dir() else []
     if not cats:
         cats = ["uncategorized"]
     cat_choices = cats + ["+ 新建分类"]
@@ -570,8 +562,8 @@ def _action_search() -> None:
 
     conn = _get_connected_repo()
     sm_remote = _get_skill_manager(conn[1]) if conn else None
-    parser = MetadataParser()
     registry = PlatformRegistry()
+    local_sm = _get_skill_manager()
 
     remote_matched: list[SkillInfo] = []
     local_matched: list[tuple[str, SkillInfo]] = []  # (platform_name, skill)
@@ -591,14 +583,12 @@ def _action_search() -> None:
         for pc in registry.all():
             if not pc.skills_dir.is_dir():
                 continue
-            for child in sorted(pc.skills_dir.iterdir()):
-                if child.is_dir() and (child / "SKILL.md").exists():
-                    meta = parser.parse(child / "SKILL.md")
-                    si = SkillInfo(metadata=meta, category="local", source_path=child)
-                    kw = keyword.lower()
-                    if (kw in meta.name.lower()
-                            or kw in (meta.description or "").lower()):
-                        local_matched.append((pc.name, si))
+            for si in local_sm.list_installed(pc.name):
+                kw = keyword.lower()
+                if (kw in si.metadata.name.lower()
+                        or kw in (si.metadata.description or "").lower()
+                        or kw in si.category.lower()):
+                    local_matched.append((pc.name, si))
 
     # 展示结果
     has_results = False
@@ -665,7 +655,7 @@ def _action_search() -> None:
         _url, cache_path = conn
         # 选分类
         skills_dir = cache_path / "skills"
-        cats = sorted(d.name for d in skills_dir.iterdir() if d.is_dir() and not d.name.startswith("_")) if skills_dir.is_dir() else []
+        cats = sorted(d.name for d in skills_dir.iterdir() if d.is_dir() and not d.name.startswith(("_", "."))) if skills_dir.is_dir() else []
         if not cats:
             cats = ["uncategorized"]
         cat_choices = cats + ["+ 新建分类"]

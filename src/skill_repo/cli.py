@@ -27,7 +27,7 @@ from skill_repo._console import (
 )
 from skill_repo.config_manager import ConfigManager
 from skill_repo.git_manager import GitManager
-from skill_repo.metadata import MetadataParser, SkillInfo
+from skill_repo.metadata import MetadataParser
 from skill_repo.platforms import PlatformRegistry
 from skill_repo.skill_manager import SkillManager
 
@@ -357,7 +357,7 @@ def search(keyword: str, from_alias: str | None):
 
 
 @cli.command()
-@click.option("--target", type=click.Choice(["claude", "codex", "kiro"]), required=True,
+@click.option("--target", type=click.Choice(["claude", "codex", "kiro", "hermes"]), required=True,
               help="目标平台")
 @click.option("--skill", default=None, help="要安装的 skill 名称")
 @click.option("--local", default=None, type=click.Path(exists=True, file_okay=False, resolve_path=True),
@@ -436,7 +436,7 @@ def install(target: str, skill: str | None, local: str | None, install_all: bool
 
 
 @cli.command()
-@click.option("--source", type=click.Choice(["claude", "codex", "kiro"]), required=True,
+@click.option("--source", type=click.Choice(["claude", "codex", "kiro", "hermes"]), required=True,
               help="来源平台")
 @click.option("--skill", default=None, help="要上传的 skill 名称")
 @click.option("--no-push", is_flag=True, help="仅本地 commit，不推送到远程")
@@ -449,17 +449,10 @@ def upload(source: str, skill: str | None, no_push: bool, category: str | None, 
 
     registry = PlatformRegistry()
     platform_config = registry.get(source)
-    local_skills_dir = platform_config.skills_dir
 
     parser = MetadataParser()
-    local_skills: list[SkillInfo] = []
-    if local_skills_dir.is_dir():
-        for child in sorted(local_skills_dir.iterdir()):
-            if child.is_dir():
-                skill_md = child / "SKILL.md"
-                if skill_md.exists():
-                    metadata = parser.parse(skill_md)
-                    local_skills.append(SkillInfo(metadata=metadata, category="local", source_path=child))
+    sm = _get_skill_manager(cache_path)
+    local_skills = sm.list_installed(source)
 
     if list_skills:
         if not local_skills:
@@ -475,12 +468,7 @@ def upload(source: str, skill: str | None, no_push: bool, category: str | None, 
         )
         sys.exit(1)
 
-    matched = [s for s in local_skills if s.metadata.name == skill]
-    if not matched and local_skills_dir.is_dir():
-        direct = local_skills_dir / skill
-        if direct.is_dir() and (direct / "SKILL.md").exists():
-            metadata = parser.parse(direct / "SKILL.md")
-            matched = [SkillInfo(metadata=metadata, category="local", source_path=direct)]
+    matched = [s for s in local_skills if s.metadata.name == skill or s.source_path.name == skill]
 
     if not matched:
         error(
@@ -498,13 +486,12 @@ def upload(source: str, skill: str | None, no_push: bool, category: str | None, 
             console.print(f"    [error]•[/error] {e}")
         sys.exit(1)
 
-    cat = category or "uncategorized"
+    cat = category or source_skill.category or "uncategorized"
     skill_name = source_skill.metadata.name
     dest = cache_path / "skills" / cat / skill_name
 
     is_update = dest.exists()
     with status_spinner("正在复制 skill 到仓库缓存 ..."):
-        sm = _get_skill_manager(cache_path)
         sm.copy_skill(source_skill.source_path, dest)
 
     action_label = "更新" if is_update else "新增"
@@ -589,7 +576,7 @@ def upload(source: str, skill: str | None, no_push: bool, category: str | None, 
 
 
 @cli.command()
-@click.option("--target", type=click.Choice(["claude", "codex", "kiro"]), required=True,
+@click.option("--target", type=click.Choice(["claude", "codex", "kiro", "hermes"]), required=True,
               help="目标平台")
 @click.option("--dry-run", is_flag=True, help="仅检查，不实际更新")
 @click.option("--from", "from_alias", default=None, help="指定仓库别名")
@@ -642,7 +629,7 @@ def update(target: str, dry_run: bool, from_alias: str | None):
 
 
 @cli.command()
-@click.option("--target", type=click.Choice(["claude", "codex", "kiro"]), required=True,
+@click.option("--target", type=click.Choice(["claude", "codex", "kiro", "hermes"]), required=True,
               help="目标平台")
 @click.option("--skill", required=True, help="要卸载的 skill 名称")
 @click.option("--yes", "-y", is_flag=True, help="跳过确认提示")
@@ -651,7 +638,8 @@ def remove(target: str, skill: str, yes: bool):
     sm = _get_skill_manager()
     registry = PlatformRegistry()
     platform_config = registry.get(target)
-    dest = platform_config.skills_dir / skill
+    installed = sm.find_installed(skill, target)
+    dest = installed.source_path if installed is not None else platform_config.skills_dir / skill
 
     if not dest.exists() and not dest.is_symlink():
         error(
@@ -684,7 +672,7 @@ def remove(target: str, skill: str, yes: bool):
 
 @cli.command()
 @click.option("--skill", required=True, help="要对比的 skill 名称")
-@click.option("--target", type=click.Choice(["claude", "codex", "kiro"]), required=True,
+@click.option("--target", type=click.Choice(["claude", "codex", "kiro", "hermes"]), required=True,
               help="本地平台")
 @click.option("--from", "from_alias", default=None, help="指定仓库别名")
 def diff(skill: str, target: str, from_alias: str | None):
@@ -695,7 +683,8 @@ def diff(skill: str, target: str, from_alias: str | None):
     registry = PlatformRegistry()
     platform_config = registry.get(target)
 
-    local_dir = platform_config.skills_dir / skill
+    installed = sm.find_installed(skill, target)
+    local_dir = installed.source_path if installed is not None else platform_config.skills_dir / skill
     # 在远程仓库中查找 skill
     skills_dir = cache_path / "skills"
     available = sm.discover_skills(skills_dir)
@@ -743,7 +732,7 @@ def diff(skill: str, target: str, from_alias: str | None):
 @click.option("--description", default="", help="Skill 描述")
 @click.option("--author", default="", help="作者")
 @click.option("--version", default="0.1.0", help="初始版本号")
-@click.option("--target", type=click.Choice(["claude", "codex", "kiro"]), default=None,
+@click.option("--target", type=click.Choice(["claude", "codex", "kiro", "hermes"]), default=None,
               help="直接创建到本地平台目录")
 def create(name: str, description: str, author: str, version: str, target: str | None):
     """脚手架创建新 skill（自动生成 SKILL.md 模板）"""
@@ -872,7 +861,7 @@ def rollback(skill: str, commit_hash: str, push: bool, from_alias: str | None):
 @cli.command()
 @click.option("--skill", required=True, help="Skill 名称")
 @click.option("--commit", "commit_hash", default=None, help="锁定到指定 commit（默认当前 HEAD）")
-@click.option("--target", type=click.Choice(["claude", "codex", "kiro"]), required=True,
+@click.option("--target", type=click.Choice(["claude", "codex", "kiro", "hermes"]), required=True,
               help="目标平台")
 @click.option("--from", "from_alias", default=None, help="指定仓库别名")
 def pin(skill: str, commit_hash: str | None, target: str, from_alias: str | None):
