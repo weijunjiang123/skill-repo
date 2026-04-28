@@ -58,10 +58,17 @@ def list_repo_connections(config: ConfigManager, *, require_cache: bool = False)
     current_url = config.get("repo.url")
     connections: list[RepoConnection] = []
     for alias, info in repos.items():
-        cache_path = Path(info.get("cache_path", ""))
-        cache_exists = cache_path.is_dir()
-        if require_cache and not cache_exists:
-            continue
+        raw_cache_path = str(info.get("cache_path") or "").strip()
+        if not raw_cache_path:
+            if require_cache:
+                continue
+            cache_path = Path("")
+            cache_exists = False
+        else:
+            cache_path = Path(raw_cache_path)
+            cache_exists = cache_path.is_dir()
+            if require_cache and not cache_exists:
+                continue
         connections.append(
             RepoConnection(
                 alias=alias,
