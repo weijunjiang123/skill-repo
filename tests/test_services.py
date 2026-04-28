@@ -67,6 +67,17 @@ class TestRepoResolution:
 
         assert [repo.alias for repo in repos] == ["cached"]
 
+    def test_require_cache_rejects_empty_cache_path(self, tmp_path: Path):
+        cfg = ConfigManager(tmp_path / "config.toml")
+        cfg.set("repo.url", "https://example.com/legacy.git")
+        cfg.set("repo.cache_path", "")
+
+        repos = list_repo_connections(cfg, require_cache=True)
+        repo = resolve_repo(cfg, require_cache=True)
+
+        assert repos == []
+        assert repo is None
+
 
 class TestUploadWorkflow:
     def test_upload_reports_add_then_update(self, tmp_path: Path):
