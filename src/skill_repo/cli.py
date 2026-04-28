@@ -29,6 +29,7 @@ from skill_repo.config_manager import ConfigManager
 from skill_repo.git_manager import GitManager
 from skill_repo.metadata import MetadataParser
 from skill_repo.platforms import PlatformRegistry
+from skill_repo.services import resolve_repo, upload_skills_to_repo
 from skill_repo.skill_manager import SkillManager
 
 # ── rich-click 配置 ──────────────────────────────────────────────
@@ -76,91 +77,24 @@ def _require_connected(from_alias: str | None = None) -> tuple[ConfigManager, st
     支持 --from alias 指定仓库，默认使用 repo.url（向后兼容）。
     """
     config = _get_config()
+    repo = resolve_repo(config, from_alias)
 
-    if from_alias:
-        repo_info = config.get_repo(from_alias)
-        if not repo_info:
-            available = config.get_repos()
-            if available:
-                aliases = ", ".join(available.keys())
-                error(
-                    f"未找到别名为 '{from_alias}' 的仓库。",
-                    hint=f"可用仓库: {aliases}",
-                )
-            else:
-                error(
-                    f"未找到别名为 '{from_alias}' 的仓库。",
-                    hint="使用 [bold]skill-repo connect <git-url> --alias <name>[/bold] 连接仓库",
-                )
+    if repo is None:
+        available = config.get_repos()
+        if from_alias and available:
+            aliases = ", ".join(available.keys())
+            error(
+                f"未找到别名为 '{from_alias}' 的仓库。",
+                hint=f"可用仓库: {aliases}",
+            )
             sys.exit(1)
-        return config, repo_info["url"], Path(repo_info["cache_path"])
-
-    # 默认：使用旧的 repo.url
-    repo_url = config.get("repo.url")
-    cache_path_str = config.get("repo.cache_path")
-
-    if not repo_url or not cache_path_str:
         error(
             "未连接到任何远程仓库。",
             hint="使用 [bold]skill-repo connect <git-url>[/bold] 或 [bold]skill-repo init <git-url>[/bold]",
         )
         sys.exit(1)
 
-    cache_path = Path(cache_path_str)
-    return config, repo_url, cache_path
-
-
-def _get_branch_mode() -> str:
-    """获取分支模式：'direct' 或 'branch'。默认 direct（更安全）。"""
-    config = _get_config()
-    mode = config.get("branch.mode")
-    return mode if mode in ("direct", "branch") else "direct"
-
-
-def _upload_with_branch(
-    git: GitManager,
-    sm: SkillManager,
-    cache_path: Path,
-    skill_name: str,
-    commit_msg: str,
-    action: str,
-) -> tuple[bool, str]:
-    """分支模式上传：创建分支 → commit → push → 尝试 merge。
-
-    返回 (merged, branch_name)。
-    """
-    username = git.get_username(cache_path)
-    branch_name = git.create_skill_branch(cache_path, username, action, skill_name)
-
-    # 在分支上 commit
-    git.add_commit_push(cache_path, commit_msg, push=False)
-
-    # push 分支
-    git.push_branch(cache_path, branch_name)
-
-    # 读取配置
-    config = _get_config()
-    auto_merge = config.get("branch.auto_merge") == "true"
-    cleanup = config.get("branch.cleanup") == "true"
-
-    if not auto_merge:
-        return False, branch_name
-
-    # 尝试 merge 到 main
-    merged = git.try_merge_to_main(cache_path, branch_name)
-    if merged:
-        # 在 main 上运行同步 + 追加提交
-        sync_result = sm.sync_all(cache_path)
-        if any(sync_result.values()):
-            try:
-                git.add_commit_push(cache_path, "同步生成文件", push=False)
-            except RuntimeError:
-                pass
-        git.push_main(cache_path)
-        if cleanup:
-            git.delete_remote_branch(cache_path, branch_name)
-
-    return merged, branch_name
+    return config, repo.url, repo.cache_path
 
 
 # ── CLI 入口 ─────────────────────────────────────────────────────
@@ -487,89 +421,43 @@ def upload(source: str, skill: str | None, no_push: bool, category: str | None, 
         sys.exit(1)
 
     cat = category or source_skill.category or "uncategorized"
-    skill_name = source_skill.metadata.name
-    dest = cache_path / "skills" / cat / skill_name
-
-    is_update = dest.exists()
-    with status_spinner("正在复制 skill 到仓库缓存 ..."):
-        sm.copy_skill(source_skill.source_path, dest)
-
-    action_label = "更新" if is_update else "新增"
-    skill_version = source_skill.metadata.version or ""
 
     git = _get_git()
-    commit_msg = git.build_skill_commit_message(
-        action_label, skill_name,
-        source=source, category=cat,
-        description=source_skill.metadata.description,
-        version=skill_version,
-    )
-
-    branch_mode = _get_branch_mode()
-    git = _get_git()
-    sm = _get_skill_manager(cache_path)
-
-    if branch_mode == "branch" and not no_push:
-        # 分支模式
-        action_short = "update" if is_update else "add"
-        with status_spinner("正在创建分支并提交 ..."):
-            try:
-                merged, branch_name = _upload_with_branch(
-                    git, sm, cache_path, skill_name, commit_msg, action_short,
-                )
-            except RuntimeError as exc:
+    with status_spinner("正在上传 skill 并同步生成文件 ..."):
+        try:
+            result = upload_skills_to_repo(
+                git=git,
+                skill_manager=sm,
+                config=_config,
+                cache_path=cache_path,
+                source=source,
+                skills=[source_skill],
+                category=cat,
+                no_push=no_push,
+            )
+        except RuntimeError as exc:
+            err_msg = str(exc)
+            if "push" in err_msg.lower():
+                warning(f"推送失败: {exc}")
+                info(f"skill 已提交到本地仓库，请手动推送:\n    cd {cache_path}\n    git push")
+            else:
                 error(f"Git 操作失败: {exc}")
                 sys.exit(1)
+            return
 
-        from skill_repo._console import upload_summary
-        console.print()
-        if merged:
-            console.print(upload_summary(
-                action_label, skill_name,
-                source=source, category=cat,
-                version=skill_version, pushed=True,
-            ))
-            success("已合并到主分支。")
-        else:
-            console.print(upload_summary(
-                action_label, skill_name,
-                source=source, category=cat,
-                version=skill_version, pushed=True,
-            ))
-            warning(f"分支 {branch_name} 已推送，但无法自动合并。")
-            info("请在 GitHub/GitLab 创建 Pull Request 合并到主分支。")
-    else:
-        # 直推模式
-        pushed = False
-        with status_spinner("正在提交到 Git ..."):
-            try:
-                git.add_commit_push(cache_path, commit_msg, push=not no_push)
-                pushed = not no_push
-            except RuntimeError as exc:
-                err_msg = str(exc)
-                if "push" in err_msg.lower():
-                    warning(f"推送失败: {exc}")
-                    info(f"skill 已提交到本地仓库，请手动推送:\n    cd {cache_path}\n    git push")
-                else:
-                    error(f"Git 操作失败: {exc}")
-                    sys.exit(1)
-
-        # 内置同步
-        with status_spinner("正在同步生成文件 ..."):
-            sync_result = sm.sync_all(cache_path)
-        if any(sync_result.values()):
-            try:
-                git.add_commit_push(cache_path, "同步生成文件", push=pushed)
-            except RuntimeError:
-                pass
-
-        from skill_repo._console import upload_summary
-        console.print()
-        console.print(upload_summary(
-            action_label, skill_name,
-            source=source, category=cat,
-            version=skill_version, pushed=pushed,
-        ))
+    from skill_repo._console import upload_summary
+    item = result.items[0]
+    console.print()
+    console.print(upload_summary(
+        item.action_label, item.skill_name,
+        source=source, category=cat,
+        version=item.version, pushed=result.pushed,
+    ))
+    if result.branch_name and result.merged:
+        success("已合并到主分支。")
+    elif result.branch_name:
+        warning(f"分支 {result.branch_name} 已推送，但无法自动合并。")
+        info("请在 GitHub/GitLab 创建 Pull Request 合并到主分支。")
 
 
 # ── update ───────────────────────────────────────────────────────

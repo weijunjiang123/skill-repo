@@ -100,31 +100,35 @@ class GitManager:
             return "main"
 
     def add_commit_push(
-        self, repo_path: Path, message: str, push: bool = True
-    ) -> None:
-        """git add all → commit → optional push。
+        self,
+        repo_path: Path,
+        message: str,
+        push: bool = True,
+        paths: list[Path | str] | tuple[Path | str, ...] | None = None,
+    ) -> bool:
+        """git add selected paths → commit → optional push。
 
-        如果没有变更则跳过 commit 和 push。
+        如果没有变更则跳过 commit 和 push。返回是否创建了 commit。
         """
-        self._run_git(["add", "."], cwd=repo_path)
+        path_args = self._normalize_pathspecs(repo_path, paths)
+        self._run_git(["add", *path_args], cwd=repo_path)
 
         # Check if there's anything to commit
+        diff_cmd = ["git", "diff", "--cached", "--quiet"]
+        if paths:
+            diff_cmd.extend(["--", *path_args])
         result = subprocess.run(
-            ["git", "diff", "--cached", "--quiet"],
+            diff_cmd,
             cwd=repo_path, capture_output=True,
             encoding="utf-8", errors="replace",
         )
         if result.returncode == 0:
-            # Nothing staged — check if working tree is also clean
-            result2 = subprocess.run(
-                ["git", "status", "--porcelain"],
-                cwd=repo_path, capture_output=True,
-                text=True, encoding="utf-8", errors="replace",
-            )
-            if not result2.stdout.strip():
-                return  # Nothing to commit, skip silently
+            return False  # Nothing to commit for the requested pathspecs.
 
-        self._run_git(["commit", "-m", message], cwd=repo_path)
+        commit_args = ["commit", "-m", message]
+        if paths:
+            commit_args.extend(["--", *path_args])
+        self._run_git(commit_args, cwd=repo_path)
         if push:
             branch = self._get_current_branch(repo_path)
             try:
@@ -137,6 +141,23 @@ class GitManager:
                 self._run_git(["push"], cwd=repo_path)
             except subprocess.CalledProcessError:
                 self._run_git(["push", "-u", "origin", branch], cwd=repo_path)
+        return True
+
+    @staticmethod
+    def _normalize_pathspecs(repo_path: Path, paths: list[Path | str] | tuple[Path | str, ...] | None) -> list[str]:
+        """Convert optional paths to git pathspecs relative to repo_path."""
+        if not paths:
+            return ["."]
+        normalized: list[str] = []
+        for item in paths:
+            path = Path(item)
+            if path.is_absolute():
+                try:
+                    path = path.relative_to(repo_path)
+                except ValueError:
+                    raise RuntimeError(f"路径不在仓库内: {path}") from None
+            normalized.append(path.as_posix())
+        return normalized
 
     def has_skills_dir(self, repo_path: Path) -> bool:
         """检查仓库是否包含 skills/ 目录。"""
@@ -350,14 +371,7 @@ class GitManager:
         self, repo_path: Path, username: str, action: str, skill_name: str,
     ) -> str:
         """基于最新 main 创建 skill 分支，返回分支名。"""
-        main_branch = self._get_main_branch(repo_path)
-
-        # 确保 main 是最新的
-        self._run_git(["checkout", main_branch], cwd=repo_path)
-        try:
-            self.pull(repo_path)
-        except RuntimeError:
-            pass
+        self.checkout_main_and_pull(repo_path)
 
         branch_name = f"skill/{username}/{action}-{skill_name}"
         # 如果分支已存在，先删除
@@ -368,6 +382,16 @@ class GitManager:
 
         self._run_git(["checkout", "-b", branch_name], cwd=repo_path)
         return branch_name
+
+    def checkout_main_and_pull(self, repo_path: Path) -> str:
+        """Checkout the main branch and best-effort pull latest changes."""
+        main_branch = self._get_main_branch(repo_path)
+        self._run_git(["checkout", main_branch], cwd=repo_path)
+        try:
+            self.pull(repo_path)
+        except RuntimeError:
+            pass
+        return main_branch
 
     def push_branch(self, repo_path: Path, branch_name: str) -> None:
         """推送分支到远程。"""
