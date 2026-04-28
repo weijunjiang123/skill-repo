@@ -476,7 +476,7 @@ def _action_upload() -> None:
                 error(f"Git 错误: {exc}")
                 return
 
-        auto_merge = config.get("branch.auto_merge") != "false"
+        auto_merge = config.get("branch.auto_merge") == "true"
         merged = False
         if auto_merge:
             with status_spinner("正在尝试合并到主分支 ..."):
@@ -492,7 +492,7 @@ def _action_upload() -> None:
                     git.push_main(cache_path)
                 except RuntimeError as exc:
                     warning(f"推送失败: {exc}")
-                if config.get("branch.cleanup") != "false":
+                if config.get("branch.cleanup") == "true":
                     git.delete_remote_branch(cache_path, branch_name)
 
         console.print()
@@ -1029,13 +1029,44 @@ def _action_repo() -> None:
         console.print(repos_table(all_repos, current_alias))
         console.print()
 
+    # 动态构建菜单：有多个仓库时才显示"切换当前仓库"
+    repo_choices = ["连接已有仓库", "初始化新仓库"]
+    if len(all_repos) > 1:
+        repo_choices.insert(0, "切换当前仓库")
+    repo_choices.append("断开连接")
+    repo_choices.append("← 返回")
+
     choice = _ask(questionary.select(
         "操作:",
-        choices=["连接已有仓库", "初始化新仓库", "断开连接", "← 返回"],
+        choices=repo_choices,
         style=_QS,
         instruction="(Esc 返回)",
     ))
     if choice is _CANCELLED or choice == "← 返回":
+        return
+
+    if choice == "切换当前仓库":
+        current_url = config.get("repo.url")
+        switch_choices = []
+        for a, r in all_repos.items():
+            label = f"{a}  ({r.get('url', '')})"
+            if r.get("url") == current_url:
+                label += "  ● 当前"
+            switch_choices.append(questionary.Choice(title=label, value=a))
+
+        selected_alias = _ask(questionary.select(
+            "选择要切换到的仓库:",
+            choices=switch_choices,
+            style=_QS,
+            instruction="(Esc 返回)",
+        ))
+        if selected_alias is _CANCELLED:
+            return
+
+        repo_info = all_repos[selected_alias]
+        config.set("repo.url", repo_info["url"])
+        config.set("repo.cache_path", repo_info.get("cache_path", ""))
+        success(f"已切换到仓库 '{selected_alias}'")
         return
 
     if choice == "断开连接":
@@ -1113,9 +1144,9 @@ def _action_settings() -> None:
         default_platform = config.get("defaults.target_platform") or "未设置"
         branch_mode = config.get("branch.mode") or "direct"
         auto_merge = config.get("branch.auto_merge")
-        auto_merge_label = "关闭" if auto_merge == "false" else "开启"
+        auto_merge_label = "开启" if auto_merge == "true" else "关闭"
         cleanup = config.get("branch.cleanup")
-        cleanup_label = "关闭" if cleanup == "false" else "开启"
+        cleanup_label = "开启" if cleanup == "true" else "关闭"
 
         # 展示当前配置
         from rich.table import Table

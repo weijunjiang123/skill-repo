@@ -111,7 +111,7 @@ def _require_connected(from_alias: str | None = None) -> tuple[ConfigManager, st
 
 
 def _get_branch_mode() -> str:
-    """获取分支模式：'direct' 或 'branch'。"""
+    """获取分支模式：'direct' 或 'branch'。默认 direct（更安全）。"""
     config = _get_config()
     mode = config.get("branch.mode")
     return mode if mode in ("direct", "branch") else "direct"
@@ -140,8 +140,8 @@ def _upload_with_branch(
 
     # 读取配置
     config = _get_config()
-    auto_merge = config.get("branch.auto_merge") != "false"
-    cleanup = config.get("branch.cleanup") != "false"
+    auto_merge = config.get("branch.auto_merge") == "true"
+    cleanup = config.get("branch.cleanup") == "true"
 
     if not auto_merge:
         return False, branch_name
@@ -166,10 +166,15 @@ def _upload_with_branch(
 # ── CLI 入口 ─────────────────────────────────────────────────────
 
 
-@click.group()
+@click.group(invoke_without_command=True)
 @click.version_option(version=skill_repo.__version__)
-def cli():
+@click.pass_context
+def cli(ctx):
     """[bold cyan]Skill 仓库 CLI 工具[/bold cyan] — 管理和共享 code agent 技能"""
+    if ctx.invoked_subcommand is None:
+        from skill_repo.interactive import run_interactive
+
+        run_interactive()
 
 
 # ── connect ──────────────────────────────────────────────────────
@@ -355,11 +360,44 @@ def search(keyword: str, from_alias: str | None):
 @click.option("--target", type=click.Choice(["claude", "codex", "kiro", "hermes"]), required=True,
               help="目标平台")
 @click.option("--skill", default=None, help="要安装的 skill 名称")
+@click.option("--local", default=None, type=click.Path(exists=True, file_okay=False, resolve_path=True),
+              help="从本地目录安装 skill（指定 skill 文件夹路径）")
 @click.option("--all", "install_all", is_flag=True, help="安装所有 skill")
 @click.option("--list", "list_skills", is_flag=True, help="列出可用 skill")
 @click.option("--from", "from_alias", default=None, help="指定仓库别名")
-def install(target: str, skill: str | None, install_all: bool, list_skills: bool, from_alias: str | None):
-    """从远程仓库安装 skill 到本地平台"""
+def install(target: str, skill: str | None, local: str | None, install_all: bool, list_skills: bool, from_alias: str | None):
+    """从远程仓库或本地目录安装 skill 到本地平台"""
+
+    # ── 本地安装模式 ──────────────────────────────────────────────
+    if local:
+        if from_alias:
+            error("--local 和 --from 不能同时使用。")
+            sys.exit(1)
+        if install_all or list_skills:
+            error("--local 模式下不支持 --all 和 --list。")
+            sys.exit(1)
+
+        local_path = Path(local)
+        sm = _get_skill_manager()
+
+        try:
+            installed = sm.install_local_skill(local_path, target)
+        except FileNotFoundError as exc:
+            error(str(exc))
+            sys.exit(1)
+        except ValueError as exc:
+            # exc.args[0] is the list of validation errors
+            errs = exc.args[0] if exc.args else []
+            error(f"'{local_path.name}' 不是有效的 skill 目录:")
+            for e in errs:
+                console.print(f"    [error]•[/error] {e}")
+            sys.exit(1)
+
+        success(f"已从本地安装 skill '{installed.metadata.name}' 到 {target} 平台。")
+        info(f"来源: {local_path}")
+        return
+
+    # ── 远程仓库安装模式（原有逻辑）─────────────────────────────
     _config, _repo_url, cache_path = _require_connected(from_alias)
     skills_dir = cache_path / "skills"
     sm = _get_skill_manager(cache_path)
@@ -1027,7 +1065,7 @@ def branch_merge(branch_name: str, from_alias: str | None):
 
     # 清理远程分支
     config = _get_config()
-    if config.get("branch.cleanup") != "false":
+    if config.get("branch.cleanup") == "true":
         git.delete_remote_branch(cache_path, branch_name)
 
     success(f"已合并 {branch_name} 到主分支并推送。")
