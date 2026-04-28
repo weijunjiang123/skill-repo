@@ -91,9 +91,15 @@ def resolve_repo(
     connections = list_repo_connections(config, require_cache=require_cache)
     if alias:
         return next((repo for repo in connections if repo.alias == alias), None)
+    current_url = config.get("repo.url")
     current = next((repo for repo in connections if repo.is_current), None)
     if current is not None:
         return current
+    if current_url:
+        # Keep current-repo selection strict: if a current repo is configured but
+        # filtered out (e.g. stale/missing cache), do not silently fall back to a
+        # different connection.
+        return None
     return connections[0] if connections else None
 
 

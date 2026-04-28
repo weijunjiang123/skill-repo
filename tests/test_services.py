@@ -85,6 +85,19 @@ class TestRepoResolution:
 
         assert repo is None
 
+    def test_resolve_repo_does_not_fallback_when_current_cache_is_stale(self, tmp_path: Path):
+        stale = tmp_path / "stale"
+        valid = tmp_path / "valid"
+        valid.mkdir()
+        cfg = ConfigManager(tmp_path / "config.toml")
+        cfg.add_repo("stale", "https://example.com/stale.git", str(stale))
+        cfg.add_repo("valid", "https://example.com/valid.git", str(valid))
+        cfg.set("repo.url", "https://example.com/stale.git")
+
+        repo = resolve_repo(cfg, require_cache=True)
+
+        assert repo is None
+
 
 class TestUploadWorkflow:
     def test_upload_reports_add_then_update(self, tmp_path: Path):
