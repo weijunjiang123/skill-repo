@@ -244,6 +244,37 @@ class SkillManager:
 
         return lines
 
+    def install_local_skill(self, skill_dir: Path, target_platform: str) -> SkillInfo:
+        """从本地目录安装 skill 到目标平台。
+
+        验证目录是否为有效 skill（包含 SKILL.md 且元数据完整），
+        然后复制到目标平台的 skills 目录。
+
+        Args:
+            skill_dir: 本地 skill 目录路径
+            target_platform: 目标平台名称 (claude/codex/kiro)
+
+        Returns:
+            安装的 SkillInfo
+
+        Raises:
+            FileNotFoundError: 目录不存在
+            ValueError: 不是有效的 skill 目录
+        """
+        if not skill_dir.is_dir():
+            raise FileNotFoundError(f"目录不存在: {skill_dir}")
+
+        errors = self.validate_skill(skill_dir)
+        if errors:
+            raise ValueError(errors)
+
+        skill_md = skill_dir / "SKILL.md"
+        metadata = self.parser.parse(skill_md)
+        skill_info = SkillInfo(metadata=metadata, category="local", source_path=skill_dir)
+
+        self.install_skill(skill_info, target_platform)
+        return skill_info
+
     def create_skill(
         self,
         target_dir: Path,
