@@ -154,14 +154,14 @@ class TestInitRepoStructure:
 def _init_bare_repo(path: Path) -> Path:
     """Create a bare git repo to act as a 'remote'."""
     path.mkdir(parents=True, exist_ok=True)
-    subprocess.run(["git", "init", "--bare", str(path)], check=True, capture_output=True)
+    subprocess.run(["git", "init", "--bare", "-b", "master", str(path)], check=True, capture_output=True)
     return path
 
 
 def _init_working_repo(path: Path) -> Path:
     """Create a working git repo with an initial commit."""
     path.mkdir(parents=True, exist_ok=True)
-    subprocess.run(["git", "init", str(path)], check=True, capture_output=True)
+    subprocess.run(["git", "init", "-b", "master", str(path)], check=True, capture_output=True)
     subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=path, check=True, capture_output=True)
     subprocess.run(["git", "config", "user.name", "Test"], cwd=path, check=True, capture_output=True)
     # initial commit
@@ -258,6 +258,53 @@ class TestAddCommitPush:
         fresh = tmp_path / "fresh"
         subprocess.run(["git", "clone", str(bare), str(fresh)], check=True, capture_output=True)
         assert (fresh / "pushed.txt").read_text() == "pushed"
+
+    def test_commit_only_selected_paths(self, tmp_path):
+        repo = _init_working_repo(tmp_path / "repo")
+        gm = GitManager(cache_dir=tmp_path)
+
+        (repo / "selected.txt").write_text("selected")
+        (repo / "unrelated.txt").write_text("unrelated")
+        committed = gm.add_commit_push(repo, "selected only", push=False, paths=[repo / "selected.txt"])
+
+        assert committed is True
+        status = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=repo,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+        assert "?? unrelated.txt" in status
+        assert "selected.txt" not in status
+
+    def test_commit_selected_paths_leaves_pre_staged_unrelated_change(self, tmp_path):
+        repo = _init_working_repo(tmp_path / "repo")
+        gm = GitManager(cache_dir=tmp_path)
+
+        (repo / "selected.txt").write_text("selected")
+        (repo / "staged.txt").write_text("staged")
+        subprocess.run(["git", "add", "staged.txt"], cwd=repo, check=True, capture_output=True)
+
+        gm.add_commit_push(repo, "selected only", push=False, paths=["selected.txt"])
+
+        status = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=repo,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+        assert "A  staged.txt" in status
+        assert "selected.txt" not in status
+
+    def test_returns_false_when_no_changes(self, tmp_path):
+        repo = _init_working_repo(tmp_path / "repo")
+        gm = GitManager(cache_dir=tmp_path)
+
+        committed = gm.add_commit_push(repo, "nothing", push=False, paths=["README.md"])
+
+        assert committed is False
 
 
 # ---------------------------------------------------------------------------

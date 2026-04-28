@@ -36,6 +36,7 @@ from skill_repo.config_manager import ConfigManager
 from skill_repo.git_manager import GitManager
 from skill_repo.metadata import MetadataParser, SkillInfo
 from skill_repo.platforms import PlatformRegistry
+from skill_repo.services import RepoConnection, list_repo_connections, resolve_repo, upload_skills_to_repo
 from skill_repo.skill_manager import SkillManager
 
 # ── sentinel 值：区分 Esc 取消 vs 选择了 None ────────────────────
@@ -71,12 +72,33 @@ def _get_skill_manager(repo_path: Path | None = None) -> SkillManager:
 
 def _get_connected_repo() -> tuple[str, Path] | None:
     config = _get_config()
-    url = config.get("repo.url")
-    cache = config.get("repo.cache_path")
-    if not url or not cache:
+    repo = resolve_repo(config, require_cache=True)
+    if repo is None:
         return None
-    p = Path(cache)
-    return (url, p) if p.is_dir() else None
+    return repo.url, repo.cache_path
+
+
+def _pick_repo(prompt: str = "选择仓库:") -> RepoConnection | None:
+    """Pick a connected repo, prompting only when more than one is available."""
+    config = _get_config()
+    repos = list_repo_connections(config, require_cache=True)
+    if not repos:
+        _not_connected_msg()
+        return None
+    if len(repos) == 1:
+        return repos[0]
+
+    choices = [
+        questionary.Choice(
+            title=f"{repo.alias}  {repo.url}" + ("  (当前)" if repo.is_current else ""),
+            value=repo,
+        )
+        for repo in repos
+    ]
+    selected = _ask(questionary.select(prompt, choices=choices, style=_QS, instruction="(Esc 返回)"))
+    if selected is _CANCELLED:
+        return None
+    return selected
 
 
 def _ask(prompt_fn):
@@ -269,12 +291,11 @@ def _action_overview() -> None:
 
 def _action_install() -> None:
     """安装 skill（仓库 → 本地）"""
-    conn = _get_connected_repo()
-    if not conn:
-        _not_connected_msg()
+    repo = _pick_repo("从哪个仓库安装?")
+    if repo is None:
         return
 
-    _url, cache_path = conn
+    cache_path = repo.cache_path
     sm = _get_skill_manager(cache_path)
     available = sm.discover_skills(cache_path / "skills")
 
@@ -326,12 +347,11 @@ def _action_install() -> None:
 
 def _action_upload() -> None:
     """上传 skill（本地 → 仓库）— 支持多选批量上传"""
-    conn = _get_connected_repo()
-    if not conn:
-        _not_connected_msg()
+    repo = _pick_repo("上传到哪个仓库?")
+    if repo is None:
         return
 
-    _url, cache_path = conn
+    cache_path = repo.cache_path
     registry = PlatformRegistry()
     parser = MetadataParser()
     sm = _get_skill_manager(cache_path)
@@ -419,128 +439,50 @@ def _action_upload() -> None:
     if ok is _CANCELLED or not ok:
         return
 
-    # 批量复制
-    sm = _get_skill_manager(cache_path)
-    uploaded_names: list[str] = []
-    with status_spinner(f"正在复制 {len(valid_skills)} 个 skill 到仓库缓存 ..."):
-        for skill in valid_skills:
-            dest = cache_path / "skills" / cat / skill.metadata.name
-            sm.copy_skill(skill.source_path, dest)
-            uploaded_names.append(skill.metadata.name)
-
-    # 一次性 git commit + push
     git = _get_git()
-    if len(valid_skills) == 1:
-        skill = valid_skills[0]
-        dest = cache_path / "skills" / cat / skill.metadata.name
-        label = "更新" if (cache_path / "skills" / cat / skill.metadata.name).exists() else "新增"
-        msg = git.build_skill_commit_message(
-            label, skill.metadata.name,
-            source=source.name, category=cat,
-            description=skill.metadata.description,
-            version=skill.metadata.version,
-        )
-    else:
-        names_str = ", ".join(uploaded_names)
-        msg = f"📦 批量上传 {len(valid_skills)} 个 skill: {names_str}\n\n来源: {source.name} | 分类: {cat}"
-
-    # 分支模式 vs 直推模式
     config = _get_config()
-    branch_mode = config.get("branch.mode") or "direct"
-
-    if branch_mode == "branch":
-        # 分支模式：每个 skill 一个分支，或批量用一个分支
-        username = git.get_username(cache_path)
-        if len(valid_skills) == 1:
-            action_short = "add"
-            branch_name = f"skill/{username}/{action_short}-{valid_skills[0].metadata.name}"
-        else:
-            branch_name = f"skill/{username}/batch-upload-{len(valid_skills)}"
-
-        with status_spinner("正在创建分支并提交 ..."):
-            try:
-                main_branch = git._get_main_branch(cache_path)
-                git._run_git(["checkout", main_branch], cwd=cache_path)
-                try:
-                    git.pull(cache_path)
-                except RuntimeError:
-                    pass
-                try:
-                    git._run_git(["branch", "-D", branch_name], cwd=cache_path)
-                except RuntimeError:
-                    pass
-                git._run_git(["checkout", "-b", branch_name], cwd=cache_path)
-                git.add_commit_push(cache_path, msg, push=False)
-                git.push_branch(cache_path, branch_name)
-            except RuntimeError as exc:
+    with status_spinner("正在提交、推送并同步生成文件 ..."):
+        try:
+            result = upload_skills_to_repo(
+                git=git,
+                skill_manager=sm,
+                config=config,
+                cache_path=cache_path,
+                source=source.name,
+                skills=valid_skills,
+                category=cat,
+            )
+        except RuntimeError as exc:
+            if "push" in str(exc).lower():
+                warning(f"推送失败: {exc}")
+                info("skill 已提交到本地仓库，请手动 git push。")
+            else:
                 error(f"Git 错误: {exc}")
-                return
+            return
 
-        auto_merge = config.get("branch.auto_merge") == "true"
-        merged = False
-        if auto_merge:
-            with status_spinner("正在尝试合并到主分支 ..."):
-                merged = git.try_merge_to_main(cache_path, branch_name)
-            if merged:
-                sync_result = sm.sync_all(cache_path)
-                if any(sync_result.values()):
-                    try:
-                        git.add_commit_push(cache_path, "同步生成文件", push=False)
-                    except RuntimeError:
-                        pass
-                try:
-                    git.push_main(cache_path)
-                except RuntimeError as exc:
-                    warning(f"推送失败: {exc}")
-                if config.get("branch.cleanup") == "true":
-                    git.delete_remote_branch(cache_path, branch_name)
+    console.print()
+    for item in result.items:
+        success(f"{item.action_label} {item.skill_name}")
 
+    from skill_repo._console import upload_summary
+    if len(result.items) == 1:
+        item = result.items[0]
         console.print()
-        for name in uploaded_names:
-            success(name)
-        if merged:
-            success("已合并到主分支。")
-        else:
-            warning(f"分支 {branch_name} 已推送，无法自动合并。")
-            info("请在 GitHub/GitLab 创建 Pull Request 合并到主分支。")
+        console.print(upload_summary(
+            item.action_label, item.skill_name,
+            source=source.name, category=cat,
+            version=item.version, pushed=result.pushed,
+        ))
     else:
-        # 直推模式
-        pushed = False
-        with status_spinner("正在提交并推送 ..."):
-            try:
-                git.add_commit_push(cache_path, msg, push=True)
-                pushed = True
-            except RuntimeError as exc:
-                if "push" in str(exc).lower():
-                    warning("推送失败，请手动 git push")
-                else:
-                    error(f"Git 错误: {exc}")
-
-        with status_spinner("正在同步生成文件 ..."):
-            sync_result = sm.sync_all(cache_path)
-        if any(sync_result.values()):
-            try:
-                git.add_commit_push(cache_path, "同步生成文件", push=pushed)
-            except RuntimeError:
-                pass
-
         console.print()
-        for name in uploaded_names:
-            success(name)
+        status_text = "[success]已推送到远程[/success]" if result.pushed else "[warning]仅本地提交[/warning]"
+        console.print(f"  批量上传 {len(result.items)} 个 skill 到 [cyan]{cat}[/cyan] 分类  {status_text}")
 
-        from skill_repo._console import upload_summary
-        if len(valid_skills) == 1:
-            skill = valid_skills[0]
-            console.print()
-            console.print(upload_summary(
-                "新增", skill.metadata.name,
-                source=source.name, category=cat,
-                version=skill.metadata.version, pushed=pushed,
-            ))
-        else:
-            console.print()
-            status_text = "[success]已推送到远程[/success]" if pushed else "[warning]仅本地提交[/warning]"
-            console.print(f"  📦 批量上传 {len(valid_skills)} 个 skill 到 [cyan]{cat}[/cyan] 分类  {status_text}")
+    if result.branch_name and result.merged:
+        success("已合并到主分支。")
+    elif result.branch_name:
+        warning(f"分支 {result.branch_name} 已推送，无法自动合并。")
+        info("请在 GitHub/GitLab 创建 Pull Request 合并到主分支。")
 
 
 def _action_search() -> None:
@@ -560,8 +502,8 @@ def _action_search() -> None:
         return
     keyword = keyword.strip()
 
-    conn = _get_connected_repo()
-    sm_remote = _get_skill_manager(conn[1]) if conn else None
+    repo = _pick_repo("使用哪个远程仓库搜索?") if scope in ("🌐  远程仓库", "🔎  全部（远程 + 本地）") else None
+    sm_remote = _get_skill_manager(repo.cache_path) if repo else None
     registry = PlatformRegistry()
     local_sm = _get_skill_manager()
 
@@ -570,12 +512,11 @@ def _action_search() -> None:
 
     # 远程搜索
     if scope in ("🌐  远程仓库", "🔎  全部（远程 + 本地）"):
-        if conn and sm_remote:
-            _url, cache_path = conn
+        if repo and sm_remote:
+            cache_path = repo.cache_path
             available = sm_remote.discover_skills(cache_path / "skills")
             remote_matched = sm_remote.search_skills(available, keyword)
         elif scope == "🌐  远程仓库":
-            _not_connected_msg()
             return
 
     # 本地搜索
@@ -617,7 +558,7 @@ def _action_search() -> None:
     actions = []
     if remote_matched:
         actions.append("📥  安装远程搜索结果")
-    if local_matched and conn:
+    if local_matched and repo:
         actions.append("📤  上传本地搜索结果")
     actions.append("← 返回")
 
@@ -651,8 +592,8 @@ def _action_search() -> None:
         for idx in selected:
             success(remote_matched[idx].metadata.name)
 
-    elif action == "📤  上传本地搜索结果" and conn:
-        _url, cache_path = conn
+    elif action == "📤  上传本地搜索结果" and repo:
+        cache_path = repo.cache_path
         # 选分类
         skills_dir = cache_path / "skills"
         cats = sorted(d.name for d in skills_dir.iterdir() if d.is_dir() and not d.name.startswith(("_", "."))) if skills_dir.is_dir() else []
@@ -668,10 +609,10 @@ def _action_search() -> None:
                 return
             cat = cat.strip()
 
-        all_local = [si for _, si in local_matched]
+        all_local = local_matched
         choices = [
-            questionary.Choice(title=s.metadata.name, value=i)
-            for i, s in enumerate(all_local)
+            questionary.Choice(title=f"{pname}: {s.metadata.name}", value=i)
+            for i, (pname, s) in enumerate(all_local)
         ]
         selected = _ask(questionary.checkbox(
             "选择要上传的 skill:",
@@ -681,32 +622,59 @@ def _action_search() -> None:
         if selected is _CANCELLED or not selected:
             return
 
+        selected_pairs = [all_local[idx] for idx in selected]
+        invalid: list[tuple[str, list[str]]] = []
+        valid_pairs: list[tuple[str, SkillInfo]] = []
+        parser = MetadataParser()
+        for pname, skill in selected_pairs:
+            errs = parser.validate(skill.source_path)
+            if errs:
+                invalid.append((skill.metadata.name, errs))
+            else:
+                valid_pairs.append((pname, skill))
+
+        if invalid:
+            warning("以下 skill 元数据不完整，将跳过:")
+            for name, errs in invalid:
+                console.print(f"    [bold]{name}[/bold]:")
+                for e in errs:
+                    console.print(f"      [error]•[/error] {e}")
+            if not valid_pairs:
+                return
+
         sm = _get_skill_manager(cache_path)
         git = _get_git()
-        names: list[str] = []
-        with status_spinner(f"正在上传 {len(selected)} 个 skill ..."):
-            for idx in selected:
-                skill = all_local[idx]
-                dest = cache_path / "skills" / cat / skill.metadata.name
-                sm.copy_skill(skill.source_path, dest)
-                names.append(skill.metadata.name)
-            msg = f"📦 上传 {len(names)} 个 skill: {', '.join(names)}\n\n分类: {cat}"
+        config = _get_config()
+        source_names = {pname for pname, _skill in valid_pairs}
+        source_name = next(iter(source_names)) if len(source_names) == 1 else "mixed"
+        skills = [skill for _pname, skill in valid_pairs]
+        with status_spinner(f"正在上传 {len(skills)} 个 skill ..."):
             try:
-                git.add_commit_push(cache_path, msg, push=True)
+                result = upload_skills_to_repo(
+                    git=git,
+                    skill_manager=sm,
+                    config=config,
+                    cache_path=cache_path,
+                    source=source_name,
+                    skills=skills,
+                    category=cat,
+                )
             except RuntimeError as exc:
                 warning(f"推送失败: {exc}")
-        for name in names:
-            success(name)
+                return
+        for item in result.items:
+            success(f"{item.action_label} {item.skill_name}")
+        if result.branch_name and not result.merged:
+            warning(f"分支 {result.branch_name} 已推送，无法自动合并。")
 
 
 def _action_update() -> None:
     """更新已安装的 skill"""
-    conn = _get_connected_repo()
-    if not conn:
-        _not_connected_msg()
+    repo = _pick_repo("从哪个仓库更新?")
+    if repo is None:
         return
 
-    _url, cache_path = conn
+    cache_path = repo.cache_path
 
     platform_name = _pick_platform("更新哪个平台的 skill?")
     if platform_name is None:
@@ -796,9 +764,8 @@ def _action_remove() -> None:
 
 def _action_version_mgmt() -> None:
     """版本管理 — 子菜单：变更历史 + 回退 + 版本锁定安装"""
-    conn = _get_connected_repo()
-    if not conn:
-        _not_connected_msg()
+    repo = _pick_repo("使用哪个仓库做版本管理?")
+    if repo is None:
         return
 
     action = _ask(questionary.select(
@@ -811,18 +778,14 @@ def _action_version_mgmt() -> None:
         return
 
     if action == "📜  查看变更历史":
-        _sub_history()
+        _sub_history(repo)
     elif action == "📌  安装指定版本":
-        _sub_pin_install()
+        _sub_pin_install(repo)
 
 
-def _sub_history() -> None:
+def _sub_history(repo: RepoConnection) -> None:
     """变更历史 + 可选回退"""
-    conn = _get_connected_repo()
-    if not conn:
-        return
-
-    _url, cache_path = conn
+    cache_path = repo.cache_path
     git = _get_git()
     sm = _get_skill_manager(cache_path)
     available = sm.discover_skills(cache_path / "skills")
@@ -915,13 +878,9 @@ def _sub_history() -> None:
         info("回退仅在本地缓存生效。")
 
 
-def _sub_pin_install() -> None:
+def _sub_pin_install(repo: RepoConnection) -> None:
     """安装指定历史版本"""
-    conn = _get_connected_repo()
-    if not conn:
-        return
-
-    _url, cache_path = conn
+    cache_path = repo.cache_path
     git = _get_git()
     sm = _get_skill_manager(cache_path)
     available = sm.discover_skills(cache_path / "skills")
