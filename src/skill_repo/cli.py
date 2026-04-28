@@ -77,7 +77,7 @@ def _require_connected(from_alias: str | None = None) -> tuple[ConfigManager, st
     支持 --from alias 指定仓库，默认使用 repo.url（向后兼容）。
     """
     config = _get_config()
-    repo = resolve_repo(config, from_alias)
+    repo = resolve_repo(config, from_alias, require_cache=True)
 
     if repo is None:
         available = config.get_repos()

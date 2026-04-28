@@ -58,12 +58,17 @@ def list_repo_connections(config: ConfigManager, *, require_cache: bool = False)
     current_url = config.get("repo.url")
     connections: list[RepoConnection] = []
     for alias, info in repos.items():
-        raw_cache_path = info.get("cache_path") or ""
-        has_cache_path = bool(raw_cache_path.strip())
-        cache_path = Path(raw_cache_path) if has_cache_path else Path()
-        cache_exists = has_cache_path and cache_path.is_dir()
-        if require_cache and not cache_exists:
-            continue
+        raw_cache_path = str(info.get("cache_path") or "").strip()
+        if not raw_cache_path:
+            if require_cache:
+                continue
+            cache_path = Path("")
+            cache_exists = False
+        else:
+            cache_path = Path(raw_cache_path)
+            cache_exists = cache_path.is_dir()
+            if require_cache and not cache_exists:
+                continue
         connections.append(
             RepoConnection(
                 alias=alias,
@@ -86,9 +91,15 @@ def resolve_repo(
     connections = list_repo_connections(config, require_cache=require_cache)
     if alias:
         return next((repo for repo in connections if repo.alias == alias), None)
+    current_url = config.get("repo.url")
     current = next((repo for repo in connections if repo.is_current), None)
     if current is not None:
         return current
+    if current_url:
+        # Keep current-repo selection strict: if a current repo is configured but
+        # filtered out (e.g. stale/missing cache), do not silently fall back to a
+        # different connection.
+        return None
     return connections[0] if connections else None
 
 
